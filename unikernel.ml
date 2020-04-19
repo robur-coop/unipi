@@ -49,7 +49,8 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
         | Some etags -> List.mem (snd !last) (Astring.String.cuts ~sep:"," etags)
         | None -> false
 
-    let last_modified, etag = !last
+    let last_modified () = fst !last
+    let etag () = snd !last
   end
 
   module Remote = struct
@@ -120,8 +121,8 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
             let mime_type = Magic_mime.lookup path in
             let headers = [
               "content-type", mime_type ;
-              "etag", Last_modified.etag ;
-              "last-modified", Last_modified.last_modified ;
+              "etag", Last_modified.etag () ;
+              "last-modified", Last_modified.last_modified () ;
             ] in
             let headers = Cohttp.Header.of_list headers in
             Http.respond ~headers ~status:`OK ~body:(`String data) ()
