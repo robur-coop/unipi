@@ -243,23 +243,29 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
            serve (Dispatch.dispatch store hookf hook_url)
        in
        if Key_gen.tls () then begin
-         Logs.info (fun f -> f "listening on 80/HTTP (let's encrypt provisioning)");
-         (* this should be cancelled once certificates are retrieved *)
-         Lwt.async (fun () -> http (`TCP 80) (serve LE.dispatch));
-         LE.provision_certificate resolver conduit >>= fun certificates ->
-         let tls_cfg = Tls.Config.server ~certificates () in
-         let https_port = 443 in
-         let tls = `TLS (tls_cfg, `TCP https_port) in
-         let https =
-           Logs.info (fun f -> f "listening on %d/HTTPS" https_port);
-           http tls server
-         and http =
-           Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
-                         http_port https_port);
-           let redirect = serve (Dispatch.redirect https_port) in
-           http tcp redirect
+         let rec provision () =
+           Logs.info (fun m ->
+               m "listening on 80/HTTP (let's encrypt provisioning)");
+           (* this should be cancelled once certificates are retrieved *)
+           Lwt.async (fun () -> http (`TCP 80) (serve LE.dispatch));
+           LE.provision_certificate resolver conduit >>= fun certificates ->
+           let tls_cfg = Tls.Config.server ~certificates () in
+           let https_port = 443 in
+           let tls = `TLS (tls_cfg, `TCP https_port) in
+           let https =
+             Logs.info (fun f -> f "listening on %d/HTTPS" https_port);
+             http tls server
+           and http =
+             Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
+                           http_port https_port);
+             let redirect = serve (Dispatch.redirect https_port) in
+             http tcp redirect
+           in
+           let expire = Time.sleep_ns (Duration.of_day 80) in
+           Lwt_result.ok (Lwt.pick [ https; http; expire ]) >>= fun () ->
+           provision ()
          in
-         Lwt_result.ok (Lwt.join [ https; http ])
+         provision ()
        end else begin
          Logs.info (fun f -> f "listening on %d/HTTP" http_port);
          Lwt_result.ok (http tcp server)
