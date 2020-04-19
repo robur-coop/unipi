@@ -156,14 +156,11 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
       Mirage_crypto_pk.Rsa.generate ?g ~bits:4096 ()
 
     let csr seed host =
-      match seed, host with
-      | None, _ ->
-        Logs.err (fun m -> m "no certificate seed provided");
-        exit argument_error
-      | _, None ->
+      match host with
+      | None ->
         Logs.err (fun m -> m "no hostname provided");
         exit argument_error
-      | Some seed, Some host ->
+      | Some host ->
         match Domain_name.of_string host with
         | Error `Msg err ->
           Logs.err (fun m -> m "invalid hostname provided %s" err);
@@ -171,7 +168,7 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
         | Ok _ ->
           let cn =
             X509.[Distinguished_name.(Relative_distinguished_name.singleton (CN host))]
-          and key = gen_rsa ~seed ()
+          and key = gen_rsa ?seed ()
           in
           key, X509.Signing_request.create cn (`RSA key)
 

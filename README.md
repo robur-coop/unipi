@@ -25,7 +25,7 @@ Unipi is only configured via boot parameters, as follows:
 
 - `--port` configures the TCP port to listen on (defaults to 80)
 - `--remote` configures the git remote url (e.g. https://github.com/mirage/ocaml-dns.git#gh-pages)
-- `--hook` configures the (secret) url of the webhook, if requested unipi updates its internal git remote
+- `--hook` configures the (secret) url of the webhook, if requested unipi updates its internal git remote (default is "hook")
 - `--ipv4` configures the IPv4 address of unipi (e.g. 192.168.2.2/24)
 - `--ipv4-gateway` configures the IPv4 gateway
 
@@ -36,10 +36,10 @@ To use git via ssh (only public/private key authentication is supported):
 For HTTPS service with let's encrypt certificate:
 - `--tls=true` enables tls
 - `--hostname=my-server.example.com` configuring the server name
-- `--production=true` for let's encrypt production environment (default is staging)
-- `--cert-seed=<my-seed>` seed for the private key of the certificate (`dd if=/dev/random bs=32 count=1 | b64encode -m -`)
-- `--account-seed=<my-seed>` seed for the let's encrypt account (see above how to generate this)
-- `--email=<account email>` email address used for let's encrypt account registration
+- `--production=true` for let's encrypt production environment (default is false, which uses the let's encrypt staging environment)
+- (optional) `--cert-seed=<my-seed>` seed for the private key of the certificate (`dd if=/dev/random bs=32 count=1 | b64encode -m -`)
+- (optional) `--account-seed=<my-seed>` seed for the let's encrypt account (see above how to generate this)
+- (optional) `--email=<account email>` email address used for let's encrypt account registration
 
 For a complete list of boot parameters, execute the binary with `--help` as
 argument.
