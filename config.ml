@@ -254,6 +254,9 @@ let mimic_impl =
   mimic_impl default_random stack
     default_monotonic_clock default_posix_clock default_time
 
+let certs_key = Key.(value @@ kv_ro ~group:"certs" ())
+let certs = generic_kv_ro ~key:certs_key "tls"
+
 let () =
   let keys = Key.([
       abstract hook; abstract remote;
@@ -269,11 +272,12 @@ let () =
       ~keys
       ~packages
       "Unikernel.Main"
-      (mimic @-> random @-> mclock @-> pclock @-> time @-> stackv4v6 @-> job)
+      (mimic @-> random @-> mclock @-> pclock @-> time @-> stackv4v6 @-> kv_ro @-> job)
     $ mimic_impl
     $ default_random
     $ default_monotonic_clock
     $ default_posix_clock
     $ default_time
     $ stack
+    $ certs
   ]
