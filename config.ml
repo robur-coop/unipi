@@ -1,7 +1,7 @@
 open Mirage
 
 let hook =
-  let doc = Key.Arg.info ~doc:"GitHub push hook." ["hook"] in
+  let doc = Key.Arg.info ~doc:"Webhook (no / allowed)." ["hook"] in
   Key.(create "hook" Arg.(opt string "hook" doc))
 
 let remote =
@@ -10,8 +10,7 @@ let remote =
             https://github.com/hannesm/unipi.git#gh-pages"
       ["remote"]
   in
-  Key.(create "remote"
-         Arg.(opt string "https://github.com/hannesm/unipi#gh-pages" doc))
+  Key.(create "remote" Arg.(required string doc))
 
 let port =
   let doc = Key.Arg.info ~doc:"HTTP listen port." ["port"] in
@@ -31,7 +30,7 @@ let ssh_authenticator =
 
 let hostname =
   let doc = Key.Arg.info ~doc:"Host name." ["hostname"] in
-  Key.(create "hostname" Arg.(required string doc))
+  Key.(create "hostname" Arg.(opt (some string) None doc))
 
 let production =
   let doc = Key.Arg.info ~doc:"Let's encrypt production environment." ["production"] in
@@ -39,7 +38,7 @@ let production =
 
 let cert_seed =
   let doc = Key.Arg.info ~doc:"Let's encrypt certificate seed." ["cert-seed"] in
-  Key.(create "cert_seed" Arg.(required string doc))
+  Key.(create "cert_seed" Arg.(opt (some string) None doc))
 
 let account_seed =
   let doc = Key.Arg.info ~doc:"Let's encrypt account seed." ["account-seed"] in

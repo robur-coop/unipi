@@ -1,5 +1,7 @@
 open Lwt.Infix
 
+let argument_error = 64
+
 module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) (M: Mirage_clock.MCLOCK) (Time: Mirage_time.S) = struct
 
   module Http = Cohttp_mirage.Server_with_conduit
@@ -56,7 +58,9 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
       | Some (pre, _) when Astring.String.is_infix ~affix:"ssh" pre ->
         begin
           match Key_gen.ssh_seed (), Key_gen.ssh_authenticator () with
-          | None, _ -> invalid_arg "no ssh key seed provided, but ssh git remote"
+          | None, _ ->
+            Logs.err (fun m -> m "no ssh key seed provided, but ssh git remote");
+            exit argument_error
           | Some seed, None ->
             Logs.warn (fun m -> m "ssh server will not be authenticated");
             Cohttp.Header.init_with "config" (seed ^ ":")
@@ -67,21 +71,21 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
 
     let decompose_git_url () =
       match String.split_on_char '#' (Key_gen.remote ()) with
-      | [ url ] -> Ok (url, None)
-      | [ url ; branch ] -> Ok (url, Some branch)
-      | _ -> Error (`Msg "expected at most a single # in remote")
+      | [ url ] -> url, None
+      | [ url ; branch ] -> url, Some branch
+      | _ ->
+        Logs.err (fun m -> m "expected at most a single # in remote");
+        exit argument_error
 
     let connect resolver conduit =
-      match decompose_git_url () with
-      | Ok (uri, branch) ->
-        let config = Irmin_mem.config () in
-        Store.Repo.v config >>= fun r ->
-        (match branch with
-         | None -> Store.master r
-         | Some branch -> Store.of_branch r branch) >|= fun repo ->
-        let headers = ssh_config () in
-        Ok (repo, Store.remote ~headers ~conduit ~resolver uri)
-      | Error _ as e -> Lwt.return e
+      let uri, branch = decompose_git_url () in
+      let config = Irmin_mem.config () in
+      Store.Repo.v config >>= fun r ->
+      (match branch with
+       | None -> Store.master r
+       | Some branch -> Store.of_branch r branch) >|= fun repo ->
+      let headers = ssh_config () in
+      repo, Store.remote ~headers ~conduit ~resolver uri
 
     let pull store upstream =
       Logs.info (fun m -> m "pulling from remote!");
@@ -95,14 +99,14 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
   end
 
   module Dispatch = struct
-    let dispatch store hook request _body =
+    let dispatch store hookf hook_url request _body =
       let p = Uri.path (Cohttp.Request.uri request) in
       let path = if String.equal p "/" then "index.html" else p in
       Logs.info (fun f -> f "requested %s" path);
       match Astring.String.cuts ~sep:"/" ~empty:false path with
-      | [ h ] when String.equal (Key_gen.hook ()) h ->
+      | [ h ] when String.equal hook_url h ->
         begin
-          hook () >>= function
+          hookf () >>= function
           | Ok data -> Http.respond ~status:`OK ~body:(`String data) ()
           | Error (`Msg msg) ->
             Http.respond ~status:`Internal_server_error ~body:(`String msg) ()
@@ -150,12 +154,24 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
       Mirage_crypto_pk.Rsa.generate ?g ~bits:4096 ()
 
     let csr seed host =
-      let open X509 in
-      let cn =
-        [Distinguished_name.(Relative_distinguished_name.singleton (CN host))]
-      and key = gen_rsa ~seed ()
-      in
-      key, Signing_request.create cn (`RSA key)
+      match seed, host with
+      | None, _ ->
+        Logs.err (fun m -> m "no certificate seed provided");
+        exit argument_error
+      | _, None ->
+        Logs.err (fun m -> m "no hostname provided");
+        exit argument_error
+      | Some seed, Some host ->
+        match Domain_name.of_string host with
+        | Error `Msg err ->
+          Logs.err (fun m -> m "invalid hostname provided %s" err);
+          exit argument_error
+        | Ok _ ->
+          let cn =
+            X509.[Distinguished_name.(Relative_distinguished_name.singleton (CN host))]
+          and key = gen_rsa ~seed ()
+          in
+          key, X509.Signing_request.create cn (`RSA key)
 
     let prefix = ".well-known", "acme-challenge"
     let tokens = Hashtbl.create 1
@@ -206,20 +222,25 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
     in
     Http.make ~conn_closed ~callback ()
 
-  let start stack resolver conduit () () () =
+  let start _stack resolver conduit () () () =
     CON.with_ssh conduit (module M) >>= fun ssh_conduit ->
     Http.connect conduit >>= fun http ->
+    Remote.connect resolver ssh_conduit >>= fun (store, upstream) ->
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
       (let open Lwt_result.Infix in
-       Remote.connect resolver ssh_conduit >>= fun (store, upstream) ->
        Remote.pull store upstream >>= fun data ->
        Logs.info (fun m -> m "store: %s" data);
        let http_port = Key_gen.port () in
        let tcp = `TCP http_port in
        let server =
-         let hook () = Remote.pull store upstream in
-         serve (Dispatch.dispatch store hook)
+         let hook_url = Key_gen.hook () in
+         if Astring.String.is_infix ~affix:"/" hook_url then begin
+           Logs.err (fun m -> m "hook url contains /, which is not allowed");
+           exit argument_error
+         end else
+           let hookf () = Remote.pull store upstream in
+           serve (Dispatch.dispatch store hookf hook_url)
        in
        if Key_gen.tls () then begin
          Logs.info (fun f -> f "listening on 80/HTTP (let's encrypt provisioning)");
