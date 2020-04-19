@@ -1,11 +1,25 @@
 open Lwt.Infix
 
-module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) = struct
+module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) (M: Mirage_clock.MCLOCK) = struct
 
   module Http = Cohttp_mirage.Server_with_conduit
 
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
+
+  let ssh_config () =
+    match Astring.String.cut ~sep:"://" (Key_gen.remote ()) with
+    | Some (pre, _) when Astring.String.is_infix ~affix:"ssh" pre ->
+      begin
+        match Key_gen.ssh_seed (), Key_gen.ssh_authenticator () with
+        | None, _ -> invalid_arg "no ssh key seed provided, but ssh git remote"
+        | Some seed, None ->
+          Logs.warn (fun m -> m "ssh server will not be authenticated");
+          Cohttp.Header.init_with "config" (seed ^ ":")
+        | Some seed, Some authenticator ->
+          Cohttp.Header.init_with "config" (seed ^ ":" ^ authenticator)
+      end
+    | _ -> Cohttp.Header.init ()
 
   let decompose_git_url () =
     match String.split_on_char '#' (Key_gen.remote ()) with
@@ -20,7 +34,8 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
     (match branch with
      | None -> Store.master r
      | Some branch -> Store.of_branch r branch) >|= fun repo ->
-    repo, Store.remote ~conduit ~resolver uri
+    let headers = ssh_config () in
+    repo, Store.remote ~headers ~conduit ~resolver uri
 
   let ptime_to_http_date ptime =
     let (y, m, d), ((hh, mm, ss), _) = Ptime.to_date_time ptime
@@ -99,7 +114,8 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
           let data = "Resource not found " ^ path in
           Http.respond ~status:`Not_found ~body:(`String data) ()
 
-  let start stack resolver conduit () =
+  let start stack resolver conduit () () =
+    CON.with_ssh conduit (module M) >>= fun conduit ->
     connect_store resolver conduit >>= fun (store, upstream) ->
     pull_store store upstream >>= function
     | Error (`Msg msg) -> Lwt.fail_with msg
