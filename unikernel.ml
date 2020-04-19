@@ -133,7 +133,8 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
     let redirect port request _body =
       let uri = Cohttp.Request.uri request in
       let new_uri = Uri.with_scheme uri (Some "https") in
-      let new_uri = Uri.with_port new_uri (Some port) in
+      let port = if port = 443 then None else Some port in
+      let new_uri = Uri.with_port new_uri port in
       Logs.info (fun f -> f "[%s] -> [%s]"
                     (Uri.to_string uri) (Uri.to_string new_uri));
       let headers =
