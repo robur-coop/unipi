@@ -8,6 +8,13 @@ example deployment is [test.nqsb.io](https://test.nqsb.io), which serves the
 [ocaml-dns](https://github.com/mirage/ocaml-dns) documentation (using the
 gh-pages branch).
 
+Some HTTP headers are added: "content-type", which value is looked up of the
+file ending using [magic-mime](https://github.com/mirage/ocaml-magic-mime/).
+"last-modified" and "etag" are the timestamp of the most recent commit to the
+git remore, respective the hash of the most recent commit. If the client sends
+"if-modified-since" or "if-none-match", and either matches the most recent
+commit, the HTTP status Not modified (304) is returned with an empty body.
+
 Inspiration for this unikernel is taken from
 [Canopy](https://github.com/Engil/Canopy) after discussion with the
 [Muen](https://muen.sk) developers.
@@ -31,8 +38,11 @@ For HTTPS service with let's encrypt certificate:
 - `--hostname=my-server.example.com` configuring the server name
 - `--production=true` for let's encrypt production environment (default is staging)
 - `--cert-seed=<my-seed>` seed for the private key of the certificate (`dd if=/dev/random bs=32 count=1 | b64encode -m -`)
-- `--account-seed=<my-seed>` seed for the let's encrypt account (see above)
-- `--email=<account email>` let's encrypt account email address
+- `--account-seed=<my-seed>` seed for the let's encrypt account (see above how to generate this)
+- `--email=<account email>` email address used for let's encrypt account registration
+
+For a complete list of boot parameters, execute the binary with `--help` as
+argument.
 
 ## Installation from source
 
@@ -47,3 +57,13 @@ $ mirage configure -t <your-favourite-target>
 $ make depend
 $ make
 ```
+
+## Installing as binary
+
+There are not yet any binaries available, but work is underway to provide
+reproducible binaries.
+
+## Questions?
+
+Please open an issue or contact me directly if you have questions, feature
+requests, or comments.
