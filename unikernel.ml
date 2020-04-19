@@ -1,6 +1,6 @@
 open Lwt.Infix
 
-module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) (M: Mirage_clock.MCLOCK) = struct
+module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) (M: Mirage_clock.MCLOCK) (Time: Mirage_time.S) = struct
 
   module Http = Cohttp_mirage.Server_with_conduit
 
@@ -23,19 +23,21 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
 
   let decompose_git_url () =
     match String.split_on_char '#' (Key_gen.remote ()) with
-    | [ url ] -> (url, None)
-    | [ url ; branch ] -> (url, Some branch)
-    | _ -> invalid_arg "expected at most a single # in remote"
+    | [ url ] -> Ok (url, None)
+    | [ url ; branch ] -> Ok (url, Some branch)
+    | _ -> Error (`Msg "expected at most a single # in remote")
 
   let connect_store resolver conduit =
-    let uri, branch = decompose_git_url () in
-    let config = Irmin_mem.config () in
-    Store.Repo.v config >>= fun r ->
-    (match branch with
-     | None -> Store.master r
-     | Some branch -> Store.of_branch r branch) >|= fun repo ->
-    let headers = ssh_config () in
-    repo, Store.remote ~headers ~conduit ~resolver uri
+    match decompose_git_url () with
+    | Ok (uri, branch) ->
+      let config = Irmin_mem.config () in
+      Store.Repo.v config >>= fun r ->
+      (match branch with
+       | None -> Store.master r
+       | Some branch -> Store.of_branch r branch) >|= fun repo ->
+      let headers = ssh_config () in
+      Ok (repo, Store.remote ~headers ~conduit ~resolver uri)
+    | Error _ as e -> Lwt.return e
 
   let ptime_to_http_date ptime =
     let (y, m, d), ((hh, mm, ss), _) = Ptime.to_date_time ptime
@@ -88,6 +90,7 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
   let dispatch store hook request _body =
     let p = Uri.path (Cohttp.Request.uri request) in
     let path = if String.equal p "/" then "index.html" else p in
+    Logs.info (fun f -> f "requested %s" path);
     match Astring.String.cuts ~sep:"/" ~empty:false path with
     | [ h ] when String.equal (Key_gen.hook ()) h ->
       begin
@@ -114,26 +117,123 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
           let data = "Resource not found " ^ path in
           Http.respond ~status:`Not_found ~body:(`String data) ()
 
-  let start stack resolver conduit () () =
-    CON.with_ssh conduit (module M) >>= fun conduit ->
-    connect_store resolver conduit >>= fun (store, upstream) ->
-    pull_store store upstream >>= function
-    | Error (`Msg msg) -> Lwt.fail_with msg
-    | Ok data ->
-      Logs.info (fun m -> m "%s" data);
-      Http.connect conduit >>= fun http ->
-      let http_port = Key_gen.port () in
-      let tcp = `TCP http_port in
-      let hook () = pull_store store upstream in
-      let serve cb =
-        let callback _ request body = cb request body
-        and conn_closed _ = ()
-        in
-        Http.make ~conn_closed ~callback ()
+  let redirect port request _body =
+    let uri = Cohttp.Request.uri request in
+    let new_uri = Uri.with_scheme uri (Some "https") in
+    let new_uri = Uri.with_port new_uri (Some port) in
+    Logs.info (fun f -> f "[%s] -> [%s]"
+                  (Uri.to_string uri) (Uri.to_string new_uri));
+    let headers = Cohttp.Header.init_with "location" (Uri.to_string new_uri) in
+    Http.respond ~headers ~status:`Moved_permanently ~body:`Empty ()
+
+  module LE = struct
+    module Acme = Letsencrypt.Client.Make(Cohttp_mirage.Client)
+
+    let gen_rsa ?seed () =
+      let g = match seed with
+        | None -> None
+        | Some seed ->
+          let seed = Cstruct.of_string seed in
+          Some (Mirage_crypto_rng.(create ~seed (module Fortuna)))
       in
-      let http =
-        Logs.info (fun f -> f "listening on %d/TCP" http_port);
-        http tcp (serve (dispatch store hook))
+      Mirage_crypto_pk.Rsa.generate ?g ~bits:4096 ()
+
+    let csr seed host =
+      let open X509 in
+      let cn =
+        [Distinguished_name.(Relative_distinguished_name.singleton (CN host))]
+      and key = gen_rsa ~seed ()
       in
-      http
+      key, Signing_request.create cn (`RSA key)
+
+    let prefix = ".well-known", "acme-challenge"
+    let tokens = Hashtbl.create 1
+
+    let solver _host ~prefix:_ ~token ~content =
+      Hashtbl.replace tokens token content;
+      Lwt.return (Ok ())
+
+    let dispatch request _body =
+      let path = Uri.path (Cohttp.Request.uri request) in
+      Logs.info (fun m -> m "let's encrypt dispatcher %s" path);
+      match Astring.String.cuts ~sep:"/" ~empty:false path with
+      | [ p1; p2; token ] when
+          String.equal p1 (fst prefix) && String.equal p2 (snd prefix) ->
+        begin
+          match Hashtbl.find_opt tokens token with
+          | Some data ->
+            let headers =
+              Cohttp.Header.init_with "content-type" "application/octet-stream"
+            in
+            Http.respond ~headers ~status:`OK ~body:(`String data) ()
+          | None -> Http.respond ~status:`Not_found ~body:`Empty ()
+        end
+      | _ -> Http.respond ~status:`Not_found ~body:`Empty ()
+
+    let provision_certificate resolver conduit =
+      let open Lwt_result.Infix in
+      let endpoint =
+        if Key_gen.production () then
+          Letsencrypt.letsencrypt_production_url
+        else
+          Letsencrypt.letsencrypt_staging_url
+      and email = Key_gen.email ()
+      and seed = Key_gen.account_seed ()
+      in
+      let ctx = Cohttp_mirage.Client.ctx resolver conduit in
+      Acme.initialise ~ctx ~endpoint ?email (gen_rsa ?seed ()) >>= fun le ->
+      let sleep sec = Time.sleep_ns (Duration.of_sec sec) in
+      let priv, csr = csr (Key_gen.cert_seed ()) (Key_gen.hostname ()) in
+      let solver = Letsencrypt.Client.http_solver solver in
+      Acme.sign_certificate ~ctx solver le sleep csr >|= fun certs ->
+      priv, certs
+  end
+
+  let serve cb =
+    let callback _ request body = cb request body
+    and conn_closed _ = ()
+    in
+    Http.make ~conn_closed ~callback ()
+
+  let start stack resolver conduit () () () =
+    CON.with_ssh conduit (module M) >>= fun ssh_conduit ->
+    Http.connect conduit >>= fun http ->
+    Lwt.map
+      (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
+      (let open Lwt_result.Infix in
+       connect_store resolver ssh_conduit >>= fun (store, upstream) ->
+       pull_store store upstream >>= fun data ->
+       Logs.info (fun m -> m "%s" data);
+       let http_port = Key_gen.port () in
+       let tcp = `TCP http_port in
+       let server =
+         let hook () = pull_store store upstream in
+         serve (dispatch store hook)
+       in
+       if Key_gen.tls () then begin
+         Logs.info (fun f -> f "listening on 80/HTTP for let's encrypt provisioning");
+         (* this could be cancelled once certificates are retrieved *)
+         Lwt.async (fun () -> http (`TCP 80) (serve LE.dispatch));
+         LE.provision_certificate resolver conduit >>= fun (priv, certs) ->
+         let certificates = `Single (certs, priv) in
+         let tls_cfg = Tls.Config.server ~certificates () in
+         let https_port = 443 in
+         let tls = `TLS (tls_cfg, `TCP https_port) in
+         let https =
+           Logs.info (fun f -> f "listening on %d/HTTPS" https_port);
+           http tls server
+         and http =
+           Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
+                         http_port https_port);
+           let redirect = serve (redirect https_port) in
+           http tcp redirect
+         in
+         Lwt_result.ok (Lwt.join [ https; http ])
+       end else begin
+         let http =
+           Logs.info (fun f -> f "listening on %d/HTTP" http_port);
+           http tcp server
+         in
+         Lwt_result.ok http
+       end)
 end
