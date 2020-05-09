@@ -1,0 +1,16 @@
+freebsd_instance:
+  image_family: freebsd-12-1
+
+freebsd_task:
+  env:
+    matrix:
+      - OCAML_VERSION: 4.09.0
+      - OCAML_VERSION: 4.10.0
+  pkg_install_script: pkg install -y ocaml-opam gmp gmake pkgconf bash
+  ocaml_script: opam init -a --comp=$OCAML_VERSION
+  mirage_script: eval `opam env` && opam install -y mirage lwt
+  configure_script: eval `opam env` && mirage configure -t hvt --no-depext
+  depend_script: eval `opam env` && make depend
+  build_script: eval `opam env` && mirage build
+  unipi_artifacts:
+    path: unipi.hvt

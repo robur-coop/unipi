@@ -64,6 +64,8 @@ let packages = [
   package ~pin:awa_pin "awa-mirage";
   package ~pin:conduit_pin "conduit";
   package ~pin:conduit_pin "conduit-lwt";
+  (* let's encrypt depends on cohttp-lwt-unix which depends on conduit-lwt-unix *)
+  package ~build:true ~pin:conduit_pin "conduit-lwt-unix";
   package ~pin:conduit_pin "conduit-mirage";
   package ~pin:git_pin "git";
   package ~pin:git_pin "git-http";
