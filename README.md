@@ -30,7 +30,7 @@ Unipi is only configured via boot parameters, as follows:
 - `--ipv4-gateway` configures the IPv4 gateway
 
 To use git via ssh (only public/private key authentication is supported):
-- `--ssh-seed` for the seed of the private key (use `awa_gen_key` to produce a random seed and public key)
+- `--ssh-seed` for the seed of the private key (use the tool `awa_gen_key` to produce a random seed and public key, and put the seed here)
 - `--ssh-authenticator` to authenticate the ssh remote (format is SHA256:b64-encoded-public-key hash, the output of `ssh-keygen -lf <(ssh-keyscan -t rsa remote-host 2>/dev/null)`)
 
 For HTTPS service with let's encrypt certificate:
