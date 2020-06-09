@@ -52,7 +52,7 @@ To install unipi from source, you need to have [opam](https://opam.ocaml.org)
 [installation instructions](https://mirageos.org/wiki/install)).
 
 ```bash
-$ git clone https://github.com/hannesm/unipi.git
+$ git clone https://github.com/roburio/unipi.git
 $ mirage configure -t <your-favourite-target>
 $ make depend
 $ make
