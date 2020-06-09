@@ -46,14 +46,17 @@ argument.
 
 ## Installation from source
 
-To install unipi from source, you need to have [opam](https://opam.ocaml.org)
-(>= 2.0.0) and [ocaml](https://ocaml.org) (>= 4.07.0) installed. Also,
-[mirage](https://mirageos.org) is required (>= 3.7.6) (follow the
-[installation instructions](https://mirageos.org/wiki/install)).
+To install this unikernel from source, you need to have
+[opam](https://opam.ocaml.org) (>= 2.0.0) and
+[ocaml](https://ocaml.org) (>= 4.07.0) installed. Also,
+[mirage](https://mirageos.org) is required (>= 3.7.7). Please follow the
+[installation instructions](https://mirageos.org/wiki/install).
+
+The following steps will clone this git repository and compile the unikernel:
 
 ```bash
 $ git clone https://github.com/roburio/unipi.git
-$ mirage configure -t <your-favourite-target>
+$ mirage configure -t <your-favourite-target> #i.e. hvt, spt, xen
 $ make depend
 $ make
 ```
@@ -65,5 +68,4 @@ reproducible binaries.
 
 ## Questions?
 
-Please open an issue or contact me directly if you have questions, feature
-requests, or comments.
+Please open an issue if you have questions, feature requests, or comments.
