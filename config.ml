@@ -48,7 +48,7 @@ let email =
   let doc = Key.Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
   Key.(create "email" Arg.(opt (some string) None doc))
 
-let awa_pin = "git+https://github.com/hannesm/awa-ssh.git"
+let awa_pin = "git+https://github.com/hannesm/awa-ssh.git#future"
 and git_pin = "git+https://github.com/hannesm/ocaml-git.git#awa-future"
 and conduit_pin = "git+https://github.com/hannesm/ocaml-conduit.git#awa-future"
 
