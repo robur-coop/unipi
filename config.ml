@@ -48,10 +48,6 @@ let email =
   let doc = Key.Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
   Key.(create "email" Arg.(opt (some string) None doc))
 
-let awa_pin = "git+https://github.com/hannesm/awa-ssh.git#future"
-and git_pin = "git+https://github.com/hannesm/ocaml-git.git#awa-future"
-and conduit_pin = "git+https://github.com/hannesm/ocaml-conduit.git#awa-future"
-
 let packages = [
   package ~min:"2.0.0" "irmin";
   package ~min:"2.0.0" "irmin-mirage";
@@ -60,16 +56,14 @@ let packages = [
   package "tls-mirage";
   package "magic-mime";
   package "logs";
-  package ~pin:awa_pin "awa";
-  package ~pin:awa_pin "awa-mirage";
-  package ~pin:conduit_pin "conduit";
-  package ~pin:conduit_pin "conduit-lwt";
-  (* let's encrypt depends on cohttp-lwt-unix which depends on conduit-lwt-unix *)
-  package ~build:true ~pin:conduit_pin "conduit-lwt-unix";
-  package ~pin:conduit_pin "conduit-mirage";
-  package ~pin:git_pin "git";
-  package ~pin:git_pin "git-http";
-  package ~pin:git_pin "git-mirage";
+  package "awa";
+  package "awa-mirage";
+  package ~min:"2.2.98" "conduit";
+  package ~min:"2.2.98" "conduit-lwt";
+  package ~min:"2.2.98" "conduit-mirage";
+  package ~min:"2.98.0" "git";
+  package ~min:"2.98.0" "git-http";
+  package ~min:"2.98.0" "git-mirage";
   package "letsencrypt";
 ]
 
