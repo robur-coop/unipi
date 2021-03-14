@@ -2,7 +2,7 @@ open Lwt.Infix
 
 let argument_error = 64
 
-module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) (M: Mirage_clock.MCLOCK) (Time: Mirage_time.S) = struct
+module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) (M: Mirage_clock.MCLOCK) (Time: Mirage_time.S) = struct
 
   module Http = Cohttp_mirage.Server_with_conduit
 
@@ -54,22 +54,6 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
   end
 
   module Remote = struct
-    let ssh_config () =
-      match Astring.String.cut ~sep:"://" (Key_gen.remote ()) with
-      | Some (pre, _) when Astring.String.is_infix ~affix:"ssh" pre ->
-        begin
-          match Key_gen.ssh_seed (), Key_gen.ssh_authenticator () with
-          | None, _ ->
-            Logs.err (fun m -> m "no ssh key seed provided, but ssh git remote");
-            exit argument_error
-          | Some seed, None ->
-            Logs.warn (fun m -> m "ssh server will not be authenticated");
-            Cohttp.Header.init_with "config" (seed ^ ":")
-          | Some seed, Some authenticator ->
-            Cohttp.Header.init_with "config" (seed ^ ":" ^ authenticator)
-        end
-      | _ -> Cohttp.Header.init ()
-
     let decompose_git_url () =
       match String.split_on_char '#' (Key_gen.remote ()) with
       | [ url ] -> url, None
@@ -78,19 +62,18 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
         Logs.err (fun m -> m "expected at most a single # in remote");
         exit argument_error
 
-    let connect resolver conduit =
+    let connect ctx =
       let uri, branch = decompose_git_url () in
       let config = Irmin_mem.config () in
       Store.Repo.v config >>= fun r ->
       (match branch with
        | None -> Store.master r
        | Some branch -> Store.of_branch r branch) >|= fun repo ->
-      let headers = ssh_config () in
-      repo, Store.remote ~headers ~conduit ~resolver uri
+      repo, Store.remote ~ctx uri
 
     let pull store upstream =
       Logs.info (fun m -> m "pulling from remote!");
-      Sync.pull store upstream `Set >>= fun r ->
+      Sync.pull ~depth:1 store upstream `Set >>= fun r ->
       Last_modified.retrieve_last_commit store >|= fun () ->
       match r with
       | Ok (`Head _ as s) -> Ok (Fmt.strf "pulled %a" Sync.pp_status s)
@@ -221,10 +204,10 @@ module Main (S: Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (
     in
     Http.make ~conn_closed ~callback ()
 
-  let start _stack resolver conduit () () () =
-    CON.with_ssh conduit (module M) >>= fun ssh_conduit ->
+  let start _stack ctx resolver conduit () () () =
+    let ctx = Git_cohttp_mirage.with_conduit (Cohttp_mirage.Client.ctx resolver conduit) ctx in
     Http.connect conduit >>= fun http ->
-    Remote.connect resolver ssh_conduit >>= fun (store, upstream) ->
+    Remote.connect ctx >>= fun (store, upstream) ->
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
       (let open Lwt_result.Infix in

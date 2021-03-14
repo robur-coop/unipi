@@ -56,7 +56,6 @@ The following steps will clone this git repository and compile the unikernel:
 
 ```bash
 $ git clone https://github.com/roburio/unipi.git
-$ opam repo add git-ssh git+https://github.com/roburio/git-ssh-dns-mirage3-repo.git
 $ cd unipi
 $ mirage configure -t <your-favourite-target> #i.e. hvt, spt, xen
 $ make depend
