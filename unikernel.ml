@@ -2,10 +2,7 @@ open Lwt.Infix
 
 let argument_error = 64
 
-module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) (C: Mirage_clock.PCLOCK) (M: Mirage_clock.MCLOCK) (Time: Mirage_time.S) = struct
-
-  module Http = Cohttp_mirage.Server_with_conduit
-
+module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirage.Server.S) (C: Mirage_clock.PCLOCK) (Time: Mirage_time.S) = struct
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
 
@@ -127,7 +124,7 @@ module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Condu
   end
 
   module LE = struct
-    module Acme = Letsencrypt.Client.Make(Cohttp_mirage.Client)
+    module Acme = Letsencrypt.Client.Make(Http_client)
 
     let gen_rsa ?seed () =
       let g = match seed with
@@ -138,7 +135,7 @@ module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Condu
       in
       Mirage_crypto_pk.Rsa.generate ?g ~bits:4096 ()
 
-    let csr seed host =
+    let csr key host =
       match host with
       | None ->
         Logs.err (fun m -> m "no hostname provided");
@@ -151,9 +148,8 @@ module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Condu
         | Ok _ ->
           let cn =
             X509.[Distinguished_name.(Relative_distinguished_name.singleton (CN host))]
-          and key = gen_rsa ?seed ()
           in
-          key, X509.Signing_request.create cn (`RSA key)
+          X509.Signing_request.create cn key
 
     let prefix = ".well-known", "acme-challenge"
     let tokens = Hashtbl.create 1
@@ -179,7 +175,7 @@ module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Condu
         end
       | _ -> Http.respond ~status:`Not_found ~body:`Empty ()
 
-    let provision_certificate resolver conduit =
+    let provision_certificate ctx =
       let open Lwt_result.Infix in
       let endpoint =
         if Key_gen.production () then
@@ -189,13 +185,17 @@ module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Condu
       and email = Key_gen.email ()
       and seed = Key_gen.account_seed ()
       in
-      let ctx = Cohttp_mirage.Client.ctx resolver conduit in
-      Acme.initialise ~ctx ~endpoint ?email (gen_rsa ?seed ()) >>= fun le ->
-      let sleep sec = Time.sleep_ns (Duration.of_sec sec) in
-      let priv, csr = csr (Key_gen.cert_seed ()) (Key_gen.hostname ()) in
-      let solver = Letsencrypt.Client.http_solver solver in
-      Acme.sign_certificate ~ctx solver le sleep csr >|= fun certs ->
-      `Single (certs, priv)
+      let priv = `RSA (gen_rsa ?seed:(Key_gen.cert_seed ()) ()) in
+      match csr priv (Key_gen.hostname ()) with
+      | Error (`Msg err) ->
+        Logs.err (fun m -> m "couldn't create signing request %s" err);
+        exit argument_error
+      | Ok csr ->
+        Acme.initialise ~ctx ~endpoint ?email (gen_rsa ?seed ()) >>= fun le ->
+        let sleep sec = Time.sleep_ns (Duration.of_sec sec) in
+        let solver = Letsencrypt.Client.http_solver solver in
+        Acme.sign_certificate ~ctx solver le sleep csr >|= fun certs ->
+        `Single (certs, priv)
   end
 
   let serve cb =
@@ -204,9 +204,7 @@ module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Condu
     in
     Http.make ~conn_closed ~callback ()
 
-  let start _stack ctx resolver conduit () () () =
-    let ctx = Git_cohttp_mirage.with_conduit (Cohttp_mirage.Client.ctx resolver conduit) ctx in
-    Http.connect conduit >>= fun http ->
+  let start ctx http_client http () () =
     Remote.connect ctx >>= fun (store, upstream) ->
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
@@ -230,7 +228,7 @@ module Main (S: Mirage_stack.V4) (_ : sig end) (RES: Resolver_lwt.S) (CON: Condu
                m "listening on 80/HTTP (let's encrypt provisioning)");
            (* this should be cancelled once certificates are retrieved *)
            Lwt.async (fun () -> http (`TCP 80) (serve LE.dispatch));
-           LE.provision_certificate resolver conduit >>= fun certificates ->
+           LE.provision_certificate http_client >>= fun certificates ->
            let tls_cfg = Tls.Config.server ~certificates () in
            let https_port = 443 in
            let tls = `TLS (tls_cfg, `TCP https_port) in
