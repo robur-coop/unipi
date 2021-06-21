@@ -1,10 +1,85 @@
+[@@@warning "-45"]
+
 open Lwt.Infix
 
 let argument_error = 64
 
-module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirage.Server.S) (C: Mirage_clock.PCLOCK) (Time: Mirage_time.S) = struct
+module Main
+  (_ : sig end)
+  (Random: Mirage_random.S)
+  (M: Mirage_clock.MCLOCK)
+  (P: Mirage_clock.PCLOCK)
+  (Time: Mirage_time.S)
+  (Stack: Mirage_stack.V4V6) = struct
+  module Nss = Ca_certs_nss.Make(P)
+  module Paf = Paf_mirage.Make(Time)(Stack)
+  module DNS = Dns_client_mirage.Make(Random)(Time)(M)(Stack)
+    (* XXX(dinosaure): no signature available for this functor, can not be used by [functoria]. *)
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
+
+  module TCP = struct
+    include Stack.TCP
+    type endpoint = Stack.TCP.t * Ipaddr.t * int
+
+    let pp_write_error ppf = function
+      | `Error err -> pp_error ppf err
+      | `Write_error err -> pp_write_error ppf err
+      | `Closed -> pp_write_error ppf `Closed
+
+    let write stack cs = write stack cs >>= function
+      | Ok v -> Lwt.return_ok v
+      | Error err -> Lwt.return_error (`Write_error err)
+
+    let writev stack css = writev stack css >>= function
+      | Ok v -> Lwt.return_ok v
+      | Error err -> Lwt.return_error (`Write_error err)
+
+    type nonrec write_error = [ `Error of error | `Write_error of write_error | `Closed ]
+
+    let connect (stack, ipaddr, port) =
+      create_connection stack (ipaddr, port) >>= function
+      | Ok flow -> Lwt.return_ok flow
+      | Error err -> Lwt.return_error (`Error err)
+  end
+
+  module TLS = struct
+    include Tls_mirage.Make (Stack.TCP)
+
+    type endpoint = Stack.TCP.t * Tls.Config.client * [ `host ] Domain_name.t option * Ipaddr.t * int
+
+    let connect (stack, cfg, domain_name, ipaddr, port) =
+      let host = Option.map Domain_name.to_string domain_name in
+      Stack.TCP.create_connection stack (ipaddr, port) >>= function
+      | Error err -> Lwt.return_error (`Read err)
+      | Ok flow -> client_of_flow cfg ?host flow
+  end
+
+  let ctx_for_client stackv4v6 =
+    let tcp_edn, _tcp_protocol = Mimic.register ~name:"tcp-client" (module TCP) in
+    let tls_edn, _tls_protocol = Mimic.register ~name:"tls-client" (module TLS) in
+    let dns = DNS.create stackv4v6 in
+    let authenticator = Rresult.R.failwith_error_msg (Nss.authenticator ()) in
+    let default_tls = Tls.Config.client ~authenticator () in
+
+    let k0 scheme stack ipaddr port = match scheme with
+      | `HTTP -> Lwt.return_some (stack, ipaddr, port)
+      | _ -> Lwt.return_none in
+    let k1 scheme stack tls domain_name ipaddr port = match scheme with
+      | `HTTPS -> Lwt.return_some (stack, tls, domain_name, ipaddr, port)
+      | _ -> Lwt.return_none in
+    let k2 domain_name = DNS.gethostbyname dns domain_name >>= function
+      | Ok ipv4 -> Lwt.return_some (Ipaddr.V4 ipv4)
+      | _ -> Lwt.return_none in
+    let stack = Mimic.make ~name:"tcp-stack" in
+    let tls = Mimic.make ~name:"tls-cfg" in
+    let open Paf_cohttp in
+    Mimic.empty
+    |> Mimic.add sleep Time.sleep_ns
+    |> Mimic.add stack (Stack.tcp stackv4v6)
+    |> Mimic.fold tcp_edn Mimic.Fun.[ req scheme; req stack; req ipaddr; dft port 80 ] ~k:k0
+    |> Mimic.fold tls_edn Mimic.Fun.[ req scheme; req stack; dft tls default_tls; opt domain_name; req ipaddr; dft port 443 ] ~k:k1
+    |> Mimic.fold ipaddr Mimic.Fun.[ req domain_name ] ~k:k2
 
   module Last_modified = struct
     let ptime_to_http_date ptime =
@@ -29,7 +104,7 @@ module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirag
         let info = Store.Commit.info head in
         let ptime =
           match Ptime.of_float_s (Int64.to_float (Irmin.Info.date info)) with
-          | None -> Ptime.v (C.now_d_ps ())
+          | None -> Ptime.v (P.now_d_ps ())
           | Some d -> d
         in
         ptime_to_http_date ptime
@@ -39,10 +114,9 @@ module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirag
       last := (last_commit_date, last_commit_hash)
 
     let not_modified request =
-      let hdr = request.Cohttp.Request.headers in
-      match Cohttp.Header.get hdr "if-modified-since" with
+      match Httpaf.Headers.get request.Httpaf.Request.headers "if-modified-since" with
       | Some ts -> String.equal ts (fst !last)
-      | None -> match Cohttp.Header.get hdr "if-none-match" with
+      | None -> match Httpaf.Headers.get request.Httpaf.Request.headers "if-none-match" with
         | Some etags -> List.mem (snd !last) (Astring.String.cuts ~sep:"," etags)
         | None -> false
 
@@ -79,52 +153,78 @@ module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirag
       | Error (`Conflict msg) -> Error (`Msg ("pull conflict " ^ msg))
   end
 
+  let respond_with_empty reqd resp =
+    let hdr = Httpaf.Headers.add_unless_exists resp.Httpaf.Response.headers
+      "connection" "close" in
+    let resp = { resp with Httpaf.Response.headers= hdr } in
+    Httpaf.Reqd.respond_with_string reqd resp ""
+
   module Dispatch = struct
-    let dispatch store hookf hook_url request _body =
-      let p = Uri.path (Cohttp.Request.uri request) in
-      let path = if String.equal p "/" then "index.html" else p in
+    let dispatch store hookf hook_url _conn reqd =
+      let request = Httpaf.Reqd.request reqd in
+      let path = request.Httpaf.Request.target in
+      let path = if String.equal path "/" then "index.html" else path in
       Logs.info (fun f -> f "requested %s" path);
       match Astring.String.cuts ~sep:"/" ~empty:false path with
       | [ h ] when String.equal hook_url h ->
         begin
-          hookf () >>= function
-          | Ok data -> Http.respond ~status:`OK ~body:(`String data) ()
+          Lwt.async @@ fun () -> hookf () >>= function
+          | Ok data ->
+            let headers = Httpaf.Headers.of_list
+              [ "content-length", string_of_int (String.length data) ] in
+            let resp = Httpaf.Response.create ~headers `OK in
+            Httpaf.Reqd.respond_with_string reqd resp data ;
+            Lwt.return_unit
           | Error (`Msg msg) ->
-            Http.respond ~status:`Internal_server_error ~body:(`String msg) ()
+            let headers = Httpaf.Headers.of_list
+              [ "content-length", string_of_int (String.length msg) ] in
+            let resp = Httpaf.Response.create ~headers `Internal_server_error in
+            Httpaf.Reqd.respond_with_string reqd resp msg ;
+            Lwt.return_unit
         end
       | path_list ->
         if Last_modified.not_modified request then
-          Http.respond ~status:`Not_modified ~body:`Empty ()
+          let resp = Httpaf.Response.create `Not_modified in
+          respond_with_empty reqd resp
         else
-          Store.find store path_list >>= function
+          Lwt.async @@ fun () -> Store.find store path_list >>= function
           | Some data ->
-            let mime_type = Magic_mime.lookup path in
+            let mime_type = Magic_mime.lookup path in (* TODO(dinosaure): replace by conan. *)
             let headers = [
               "content-type", mime_type ;
               "etag", Last_modified.etag () ;
               "last-modified", Last_modified.last_modified () ;
+              "content-length", string_of_int (String.length data) ;
             ] in
-            let headers = Cohttp.Header.of_list headers in
-            Http.respond ~headers ~status:`OK ~body:(`String data) ()
+            let headers = Httpaf.Headers.of_list headers in
+            let resp = Httpaf.Response.create ~headers `OK in
+            Httpaf.Reqd.respond_with_string reqd resp data ;
+            Lwt.return_unit
           | None ->
             let data = "Resource not found " ^ path in
-            Http.respond ~status:`Not_found ~body:(`String data) ()
+            let headers = Httpaf.Headers.of_list
+              [ "content-length", string_of_int (String.length data) ] in
+            let resp = Httpaf.Response.create ~headers `Not_found in
+            Httpaf.Reqd.respond_with_string reqd resp data ;
+            Lwt.return_unit
 
-    let redirect port request _body =
-      let uri = Cohttp.Request.uri request in
-      let new_uri = Uri.with_scheme uri (Some "https") in
+    let redirect port _ reqd =
+      let request = Httpaf.Reqd.request reqd in
       let port = if port = 443 then None else Some port in
-      let new_uri = Uri.with_port new_uri port in
+      let path = request.Httpaf.Request.target in
+      let new_uri = Uri.make ~scheme:"https" ?host:(Key_gen.hostname ()) ?port ~path () in
+      (* TODO(dinosaure): check it. *)
       Logs.info (fun f -> f "[%s] -> [%s]"
-                    (Uri.to_string uri) (Uri.to_string new_uri));
+                    path (Uri.to_string new_uri));
       let headers =
-        Cohttp.Header.init_with "location" (Uri.to_string new_uri)
-      in
-      Http.respond ~headers ~status:`Moved_permanently ~body:`Empty ()
+        Httpaf.Headers.of_list
+          [ "location", (Uri.to_string new_uri) ] in
+      let resp = Httpaf.Response.create ~headers `Moved_permanently in
+      respond_with_empty reqd resp
   end
 
   module LE = struct
-    module Acme = Letsencrypt.Client.Make(Http_client)
+    module Acme = Letsencrypt.Client.Make(Paf_cohttp)
 
     let gen_rsa ?seed () =
       let g = match seed with
@@ -158,8 +258,9 @@ module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirag
       Hashtbl.replace tokens token content;
       Lwt.return (Ok ())
 
-    let dispatch request _body =
-      let path = Uri.path (Cohttp.Request.uri request) in
+    let dispatch _ reqd =
+      let request = Httpaf.Reqd.request reqd in
+      let path = request.Httpaf.Request.target in
       Logs.info (fun m -> m "let's encrypt dispatcher %s" path);
       match Astring.String.cuts ~sep:"/" ~empty:false path with
       | [ p1; p2; token ] when
@@ -168,12 +269,19 @@ module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirag
           match Hashtbl.find_opt tokens token with
           | Some data ->
             let headers =
-              Cohttp.Header.init_with "content-type" "application/octet-stream"
+              Httpaf.Headers.of_list
+                [ "content-type", "application/octet-stream" ;
+                  "content-length", string_of_int (String.length data) ]
             in
-            Http.respond ~headers ~status:`OK ~body:(`String data) ()
-          | None -> Http.respond ~status:`Not_found ~body:`Empty ()
+            let resp = Httpaf.Response.create ~headers `OK in
+            Httpaf.Reqd.respond_with_string reqd resp data
+          | None ->
+            let resp = Httpaf.Response.create `Not_found in
+            respond_with_empty reqd resp
         end
-      | _ -> Http.respond ~status:`Not_found ~body:`Empty ()
+      | _ ->
+        let resp = Httpaf.Response.create `Not_found in
+        respond_with_empty reqd resp
 
     let provision_certificate ctx =
       let open Lwt_result.Infix in
@@ -198,56 +306,64 @@ module Main (_ : sig end) (Http_client: Cohttp_lwt.S.Client) (Http: Cohttp_mirag
         `Single (certs, priv)
   end
 
-  let serve cb =
-    let callback _ request body = cb request body
-    and conn_closed _ = ()
-    in
-    Http.make ~conn_closed ~callback ()
+  let ignore_error _ ?request:_ _ _ = ()
+  let ( >>? ) = Lwt_result.bind
 
-  let start ctx http_client http () () =
-    Remote.connect ctx >>= fun (store, upstream) ->
+  let request_handler store upstream : _ -> Httpaf.Server_connection.request_handler =
+    let hook_url = Key_gen.hook () in
+    if Astring.String.is_infix ~affix:"/" hook_url then begin
+      Logs.err (fun m -> m "hook url contains /, which is not allowed");
+      exit argument_error
+    end else
+      let hookf () = Remote.pull store upstream in
+      Dispatch.dispatch store hookf hook_url
+
+  let start git_ctx () () () () stackv4v6 =
+    let paf_ctx = ctx_for_client stackv4v6 in
+    Remote.connect git_ctx >>= fun (store, upstream) ->
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
-      (let open Lwt_result.Infix in
-       Remote.pull store upstream >>= fun data ->
+      (Remote.pull store upstream >>? fun data ->
        Logs.info (fun m -> m "store: %s" data);
-       let http_port = Key_gen.port () in
-       let tcp = `TCP http_port in
-       let server =
-         let hook_url = Key_gen.hook () in
-         if Astring.String.is_infix ~affix:"/" hook_url then begin
-           Logs.err (fun m -> m "hook url contains /, which is not allowed");
-           exit argument_error
-         end else
-           let hookf () = Remote.pull store upstream in
-           serve (Dispatch.dispatch store hookf hook_url)
-       in
        if Key_gen.tls () then begin
          let rec provision () =
+           Paf.init ~port:80 stackv4v6 >>= fun t ->
+           let service = Paf.http_service
+             ~error_handler:ignore_error
+             LE.dispatch in
+           let stop = Lwt_switch.create () in
+           let `Initialized th0 = Paf.serve ~stop service t in
            Logs.info (fun m ->
                m "listening on 80/HTTP (let's encrypt provisioning)");
-           (* this should be cancelled once certificates are retrieved *)
-           Lwt.async (fun () -> http (`TCP 80) (serve LE.dispatch));
-           LE.provision_certificate http_client >>= fun certificates ->
-           let tls_cfg = Tls.Config.server ~certificates () in
-           let https_port = 443 in
-           let tls = `TLS (tls_cfg, `TCP https_port) in
-           let https =
-             Logs.info (fun f -> f "listening on %d/HTTPS" https_port);
-             http tls server
-           and http =
-             Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
-                           http_port https_port);
-             let redirect = serve (Dispatch.redirect https_port) in
-             http tcp redirect
-           in
-           let expire = Time.sleep_ns (Duration.of_day 80) in
-           Lwt_result.ok (Lwt.pick [ https; http; expire ]) >>= fun () ->
-           provision ()
+           let th1 =
+             LE.provision_certificate paf_ctx >>? fun certificates ->
+             Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
+           Lwt.both th0 th1 >>= function
+           | ((), (Error _ as err)) -> Lwt.return err
+           | ((), Ok certificates) ->
+             Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
+             let tls = Tls.Config.server ~certificates () in
+             Paf.init ~port:(Key_gen.port ()) stackv4v6 >>= fun t ->
+             let service = Paf.https_service ~tls
+               ~error_handler:ignore_error
+               (request_handler store upstream) in
+             let stop = Lwt_switch.create () in
+             let `Initialized th = Paf.serve ~stop service t in
+             Logs.info (fun m ->
+                 m "listening on %d/HTTPS" (Key_gen.port ()));
+             Lwt.both th
+               (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop)
+               >>= fun ((), ()) ->
+             provision ()
          in
          provision ()
        end else begin
-         Logs.info (fun f -> f "listening on %d/HTTP" http_port);
-         Lwt_result.ok (http tcp server)
+         Paf.init ~port:(Key_gen.port ()) stackv4v6 >>= fun t ->
+         let service = Paf.http_service
+           ~error_handler:ignore_error
+           (request_handler store upstream) in
+         let `Initialized th = Paf.serve service t in
+         Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
+         (th >|= fun v -> Ok v)
        end)
 end
