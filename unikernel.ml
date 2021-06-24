@@ -3,6 +3,7 @@
 open Lwt.Infix
 
 let argument_error = 64
+let ( <.> ) f g = fun x -> f (g x)
 
 module Main
   (_ : sig end)
@@ -11,75 +12,13 @@ module Main
   (P: Mirage_clock.PCLOCK)
   (Time: Mirage_time.S)
   (Stack: Mirage_stack.V4V6) = struct
+
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Time)(Stack)
+  module LE = LE.Make(Time)(Stack)
   module DNS = Dns_client_mirage.Make(Random)(Time)(M)(Stack)
-    (* XXX(dinosaure): no signature available for this functor, can not be used by [functoria]. *)
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
-
-  module TCP = struct
-    include Stack.TCP
-    type endpoint = Stack.TCP.t * Ipaddr.t * int
-
-    let pp_write_error ppf = function
-      | `Error err -> pp_error ppf err
-      | `Write_error err -> pp_write_error ppf err
-      | `Closed -> pp_write_error ppf `Closed
-
-    let write stack cs = write stack cs >>= function
-      | Ok v -> Lwt.return_ok v
-      | Error err -> Lwt.return_error (`Write_error err)
-
-    let writev stack css = writev stack css >>= function
-      | Ok v -> Lwt.return_ok v
-      | Error err -> Lwt.return_error (`Write_error err)
-
-    type nonrec write_error = [ `Error of error | `Write_error of write_error | `Closed ]
-
-    let connect (stack, ipaddr, port) =
-      create_connection stack (ipaddr, port) >>= function
-      | Ok flow -> Lwt.return_ok flow
-      | Error err -> Lwt.return_error (`Error err)
-  end
-
-  module TLS = struct
-    include Tls_mirage.Make (Stack.TCP)
-
-    type endpoint = Stack.TCP.t * Tls.Config.client * [ `host ] Domain_name.t option * Ipaddr.t * int
-
-    let connect (stack, cfg, domain_name, ipaddr, port) =
-      let host = Option.map Domain_name.to_string domain_name in
-      Stack.TCP.create_connection stack (ipaddr, port) >>= function
-      | Error err -> Lwt.return_error (`Read err)
-      | Ok flow -> client_of_flow cfg ?host flow
-  end
-
-  let ctx_for_client stackv4v6 =
-    let tcp_edn, _tcp_protocol = Mimic.register ~name:"tcp-client" (module TCP) in
-    let tls_edn, _tls_protocol = Mimic.register ~name:"tls-client" (module TLS) in
-    let dns = DNS.create stackv4v6 in
-    let authenticator = Rresult.R.failwith_error_msg (Nss.authenticator ()) in
-    let default_tls = Tls.Config.client ~authenticator () in
-
-    let k0 scheme stack ipaddr port = match scheme with
-      | `HTTP -> Lwt.return_some (stack, ipaddr, port)
-      | _ -> Lwt.return_none in
-    let k1 scheme stack tls domain_name ipaddr port = match scheme with
-      | `HTTPS -> Lwt.return_some (stack, tls, domain_name, ipaddr, port)
-      | _ -> Lwt.return_none in
-    let k2 domain_name = DNS.gethostbyname dns domain_name >>= function
-      | Ok ipv4 -> Lwt.return_some (Ipaddr.V4 ipv4)
-      | _ -> Lwt.return_none in
-    let stack = Mimic.make ~name:"tcp-stack" in
-    let tls = Mimic.make ~name:"tls-cfg" in
-    let open Paf_cohttp in
-    Mimic.empty
-    |> Mimic.add sleep Time.sleep_ns
-    |> Mimic.add stack (Stack.tcp stackv4v6)
-    |> Mimic.fold tcp_edn Mimic.Fun.[ req scheme; req stack; req ipaddr; dft port 80 ] ~k:k0
-    |> Mimic.fold tls_edn Mimic.Fun.[ req scheme; req stack; dft tls default_tls; opt domain_name; req ipaddr; dft port 443 ] ~k:k1
-    |> Mimic.fold ipaddr Mimic.Fun.[ req domain_name ] ~k:k2
 
   module Last_modified = struct
     let ptime_to_http_date ptime =
@@ -223,89 +162,6 @@ module Main
       respond_with_empty reqd resp
   end
 
-  module LE = struct
-    module Acme = Letsencrypt.Client.Make(Paf_cohttp)
-
-    let gen_rsa ?seed () =
-      let g = match seed with
-        | None -> None
-        | Some seed ->
-          let seed = Cstruct.of_string seed in
-          Some (Mirage_crypto_rng.(create ~seed (module Fortuna)))
-      in
-      Mirage_crypto_pk.Rsa.generate ?g ~bits:4096 ()
-
-    let csr key host =
-      match host with
-      | None ->
-        Logs.err (fun m -> m "no hostname provided");
-        exit argument_error
-      | Some host ->
-        match Domain_name.of_string host with
-        | Error `Msg err ->
-          Logs.err (fun m -> m "invalid hostname provided %s" err);
-          exit argument_error
-        | Ok _ ->
-          let cn =
-            X509.[Distinguished_name.(Relative_distinguished_name.singleton (CN host))]
-          in
-          X509.Signing_request.create cn key
-
-    let prefix = ".well-known", "acme-challenge"
-    let tokens = Hashtbl.create 1
-
-    let solver _host ~prefix:_ ~token ~content =
-      Hashtbl.replace tokens token content;
-      Lwt.return (Ok ())
-
-    let dispatch _ reqd =
-      let request = Httpaf.Reqd.request reqd in
-      let path = request.Httpaf.Request.target in
-      Logs.info (fun m -> m "let's encrypt dispatcher %s" path);
-      match Astring.String.cuts ~sep:"/" ~empty:false path with
-      | [ p1; p2; token ] when
-          String.equal p1 (fst prefix) && String.equal p2 (snd prefix) ->
-        begin
-          match Hashtbl.find_opt tokens token with
-          | Some data ->
-            let headers =
-              Httpaf.Headers.of_list
-                [ "content-type", "application/octet-stream" ;
-                  "content-length", string_of_int (String.length data) ]
-            in
-            let resp = Httpaf.Response.create ~headers `OK in
-            Httpaf.Reqd.respond_with_string reqd resp data
-          | None ->
-            let resp = Httpaf.Response.create `Not_found in
-            respond_with_empty reqd resp
-        end
-      | _ ->
-        let resp = Httpaf.Response.create `Not_found in
-        respond_with_empty reqd resp
-
-    let provision_certificate ctx =
-      let open Lwt_result.Infix in
-      let endpoint =
-        if Key_gen.production () then
-          Letsencrypt.letsencrypt_production_url
-        else
-          Letsencrypt.letsencrypt_staging_url
-      and email = Key_gen.email ()
-      and seed = Key_gen.account_seed ()
-      in
-      let priv = `RSA (gen_rsa ?seed:(Key_gen.cert_seed ()) ()) in
-      match csr priv (Key_gen.hostname ()) with
-      | Error (`Msg err) ->
-        Logs.err (fun m -> m "couldn't create signing request %s" err);
-        exit argument_error
-      | Ok csr ->
-        Acme.initialise ~ctx ~endpoint ?email (gen_rsa ?seed ()) >>= fun le ->
-        let sleep sec = Time.sleep_ns (Duration.of_sec sec) in
-        let solver = Letsencrypt.Client.http_solver solver in
-        Acme.sign_certificate ~ctx solver le sleep csr >|= fun certs ->
-        `Single (certs, priv)
-  end
-
   let ignore_error _ ?request:_ _ _ = ()
   let ( >>? ) = Lwt_result.bind
 
@@ -319,7 +175,6 @@ module Main
       Dispatch.dispatch store hookf hook_url
 
   let start git_ctx () () () () stackv4v6 =
-    let paf_ctx = ctx_for_client stackv4v6 in
     Remote.connect git_ctx >>= fun (store, upstream) ->
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
@@ -330,13 +185,23 @@ module Main
            Paf.init ~port:80 stackv4v6 >>= fun t ->
            let service = Paf.http_service
              ~error_handler:ignore_error
-             LE.dispatch in
+             LE.request_handler in
            let stop = Lwt_switch.create () in
            let `Initialized th0 = Paf.serve ~stop service t in
            Logs.info (fun m ->
                m "listening on 80/HTTP (let's encrypt provisioning)");
            let th1 =
-             LE.provision_certificate paf_ctx >>? fun certificates ->
+             LE.provision_certificate
+               ~production:(Key_gen.production ())
+               { LE.certificate_seed= Key_gen.cert_seed ()
+               ; LE.email= Option.bind (Key_gen.email ()) (Rresult.R.to_option <.> Emile.of_string)
+               ; LE.seed= Key_gen.account_seed ()
+               ; LE.hostname= (Domain_name.(host_exn <.> of_string_exn <.> Option.get) (Key_gen.hostname ())) }
+               (LE.ctx
+                  ~gethostbyname:(fun dns domain_name -> DNS.gethostbyname dns domain_name >>? fun ipv4 -> Lwt.return_ok (Ipaddr.V4 ipv4))
+                  ~authenticator:(Rresult.R.failwith_error_msg (Nss.authenticator ()))
+                  (DNS.create stackv4v6) stackv4v6)
+               >>? fun certificates ->
              Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
            Lwt.both th0 th1 >>= function
            | ((), (Error _ as err)) -> Lwt.return err

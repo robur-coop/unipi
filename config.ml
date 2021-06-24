@@ -207,6 +207,7 @@ let packages = [
   package "awa-mirage";
   package ~min:"3.4.0" "git-mirage";
   package ~min:"0.2.5" "letsencrypt";
+  package "paf" ~sublibs:[ "le" ] ~pin:"git+https://github.com/dinosaure/paf-le-chien.git#better-le"
 ]
 
 let stack = generic_stackv4v6 default_network
