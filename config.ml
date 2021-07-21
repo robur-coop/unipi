@@ -88,13 +88,13 @@ let mimic_dns_conf =
   let packages = [ package "git-mirage" ~sublibs:[ "dns" ] ] in
   impl @@ object
        inherit base_configurable
-       method ty = random @-> mclock @-> time @-> stackv4v6 @-> mimic @-> mimic
+       method ty = random @-> mclock @-> pclock @-> time @-> stackv4v6 @-> mimic @-> mimic
        method module_name = "Git_mirage_dns.Make"
        method! packages = Key.pure packages
        method name = "dns_ctx"
        method! connect _ modname =
          function
-         | [ _; _; _; stack; tcp_ctx ] ->
+         | [ _; _; _; _; stack; tcp_ctx ] ->
              Fmt.str
                {ocaml|let dns_ctx00 = Mimic.merge %s %s.ctx in
                       let dns_ctx01 = %s.with_dns %s dns_ctx00 in
@@ -104,34 +104,19 @@ let mimic_dns_conf =
          | _ -> assert false
      end
 
-let mimic_dns_impl random mclock time stackv4v6 mimic_tcp =
-  mimic_dns_conf $ random $ mclock $ time $ stackv4v6 $ mimic_tcp
-
-type paf = Paf
-let paf = typ Paf
-
-let paf_conf () =
-  let packages = [ package "paf" ~sublibs:[ "mirage" ] ] in
-  impl @@ object
-    inherit base_configurable
-    method ty = time @-> stackv4v6 @-> paf
-    method module_name = "Paf_mirage.Make"
-    method! packages = Key.pure packages
-    method name = "paf"
-  end
-
-let paf_impl time stackv4v6 = paf_conf () $ time $ stackv4v6
+let mimic_dns_impl random mclock pclock time stackv4v6 mimic_tcp =
+  mimic_dns_conf $ random $ mclock $ pclock $ time $ stackv4v6 $ mimic_tcp
 
 let mimic_paf_conf () =
   let packages = [ package "git-paf" ] in
   impl @@ object
        inherit base_configurable
-       method ty = time @-> pclock @-> stackv4v6 @-> paf @-> mimic @-> mimic
+       method ty = time @-> pclock @-> stackv4v6 @-> mimic @-> mimic
        method module_name = "Git_paf.Make"
        method! packages = Key.pure packages
        method name = "paf_ctx"
        method! connect _ modname = function
-         | [ _; _; _; _; tcp_ctx; ] ->
+         | [ _; _; _; tcp_ctx; ] ->
              Fmt.str
                {ocaml|let paf_ctx00 = Mimic.merge %s %s.ctx in
                       Lwt.return paf_ctx00|ocaml}
@@ -139,12 +124,11 @@ let mimic_paf_conf () =
          | _ -> assert false
      end
 
-let mimic_paf_impl time pclock stackv4v6 paf mimic_tcp =
+let mimic_paf_impl time pclock stackv4v6 mimic_tcp =
   mimic_paf_conf ()
   $ time
   $ pclock
   $ stackv4v6
-  $ paf
   $ mimic_tcp
 (* --- end of copied code --- *)
 
@@ -197,32 +181,33 @@ let email =
   Key.(create "email" Arg.(opt (some string) None doc))
 
 let packages = [
-  package ~min:"2.6.0" "irmin";
-  package ~min:"2.6.0" "irmin-mirage";
-  package ~min:"2.6.0" "irmin-mirage-git";
+  package ~min:"3.5.0" "git-paf";
+  package ~min:"3.5.0" "git";
+  package ~min:"3.5.0" "git-mirage";
+  package ~min:"2.8.0" ~max:"3.0.0" "irmin-mirage-git";
   package "tls-mirage";
   package "magic-mime";
   package "logs";
   package "awa";
   package "awa-mirage";
-  package ~min:"3.4.0" "git-mirage";
-  package ~min:"0.2.5" "letsencrypt";
-  package "paf" ~sublibs:[ "le" ] ~pin:"git+https://github.com/dinosaure/paf-le-chien.git#better-le"
+  package ~min:"3.6.0" ~max:"3.7.0" "git-mirage";
+  package ~min:"0.3.0" "letsencrypt";
+  package "paf" ~min:"0.0.6" ~sublibs:[ "mirage" ];
+  package "paf-le";
 ]
 
 let stack = generic_stackv4v6 default_network
 
-let mimic_impl ~kind ~seed ~authenticator stackv4v6 random mclock pclock time paf =
+let mimic_impl ~kind ~seed ~authenticator stackv4v6 random mclock pclock time =
   let mtcp = mimic_tcp_impl stackv4v6 in
-  let mdns = mimic_dns_impl random mclock time stackv4v6 mtcp in
+  let mdns = mimic_dns_impl random mclock pclock time stackv4v6 mtcp in
   let mssh = mimic_ssh_impl ~kind ~seed ~auth:authenticator stackv4v6 mtcp mclock in
-  let mpaf = mimic_paf_impl time pclock stackv4v6 paf mtcp in
+  let mpaf = mimic_paf_impl time pclock stackv4v6 mtcp in
   merge mpaf (merge mssh mdns)
 
 let mimic_impl =
   mimic_impl ~kind:`Rsa ~seed:ssh_seed ~authenticator:ssh_authenticator stack
     default_random default_monotonic_clock default_posix_clock default_time
-    (paf_impl default_time stack)
 
 let () =
   let keys = Key.([

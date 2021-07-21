@@ -16,7 +16,7 @@ module Main
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Time)(Stack)
   module LE = LE.Make(Time)(Stack)
-  module DNS = Dns_client_mirage.Make(Random)(Time)(M)(Stack)
+  module DNS = Dns_client_mirage.Make(Random)(Time)(M)(P)(Stack)
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
 
@@ -86,7 +86,7 @@ module Main
       Sync.pull ~depth:1 store upstream `Set >>= fun r ->
       Last_modified.retrieve_last_commit store >|= fun () ->
       match r with
-      | Ok (`Head _ as s) -> Ok (Fmt.strf "pulled %a" Sync.pp_status s)
+      | Ok (`Head _ as s) -> Ok (Fmt.str "pulled %a" Sync.pp_status s)
       | Ok `Empty -> Error (`Msg "pulled empty repository")
       | Error (`Msg e) -> Error (`Msg ("pull error " ^ e))
       | Error (`Conflict msg) -> Error (`Msg ("pull conflict " ^ msg))
@@ -126,7 +126,7 @@ module Main
           let resp = Httpaf.Response.create `Not_modified in
           respond_with_empty reqd resp
         else
-          Lwt.async @@ fun () -> Store.find store path_list >>= function
+          Lwt.async @@ fun () -> Store.find store (Store.Key.v path_list) >>= function
           | Some data ->
             let mime_type = Magic_mime.lookup path in (* TODO(dinosaure): replace by conan. *)
             let headers = [
@@ -194,8 +194,12 @@ module Main
              LE.provision_certificate
                ~production:(Key_gen.production ())
                { LE.certificate_seed= Key_gen.cert_seed ()
+               ; LE.certificate_key_type= `ED25519
+               ; LE.certificate_key_bits= Some 4096
                ; LE.email= Option.bind (Key_gen.email ()) (Rresult.R.to_option <.> Emile.of_string)
-               ; LE.seed= Key_gen.account_seed ()
+               ; LE.account_seed= Key_gen.account_seed ()
+               ; LE.account_key_type= `ED25519
+               ; LE.account_key_bits= Some 4096
                ; LE.hostname= (Domain_name.(host_exn <.> of_string_exn <.> Option.get) (Key_gen.hostname ())) }
                (LE.ctx
                   ~gethostbyname:(fun dns domain_name -> DNS.gethostbyname dns domain_name >>? fun ipv4 -> Lwt.return_ok (Ipaddr.V4 ipv4))
