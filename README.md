@@ -64,8 +64,8 @@ $ make
 
 ## Installing as binary
 
-There are not yet any binaries available, but work is underway to provide
-reproducible binaries.
+There are binaries available at [Reproducible OPAM builds](https://builds.robur.coop/),
+see [Reproducible MirageOS unikernel builds](https://hannes.nqsb.io/Posts/ReproducibleOPAM) for a detailed description.
 
 ## Questions?
 
