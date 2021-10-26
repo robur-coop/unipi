@@ -1,9 +1,6 @@
-[@@@warning "-45"]
-
 open Lwt.Infix
 
 let argument_error = 64
-let ( <.> ) f g = fun x -> f (g x)
 
 module Main
   (_ : sig end)
@@ -174,6 +171,13 @@ module Main
       let hookf () = Remote.pull store upstream in
       Dispatch.dispatch store hookf hook_url
 
+  let key_type kt =
+    match X509.Key_type.of_string kt with
+    | Ok kt -> kt
+    | Error `Msg msg ->
+      Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
+      exit argument_error
+
   let start git_ctx () () () () stackv4v6 =
     Remote.connect git_ctx >>= fun (store, upstream) ->
     Lwt.map
@@ -191,19 +195,23 @@ module Main
            Logs.info (fun m ->
                m "listening on 80/HTTP (let's encrypt provisioning)");
            let th1 =
+             let gethostbyname dns domain_name =
+               DNS.gethostbyname dns domain_name >>? fun ipv4 ->
+               Lwt.return_ok (Ipaddr.V4 ipv4)
+             in
              LE.provision_certificate
                ~production:(Key_gen.production ())
-               { LE.certificate_seed= Key_gen.cert_seed ()
-               ; LE.certificate_key_type= `ED25519
-               ; LE.certificate_key_bits= Some 4096
-               ; LE.email= Option.bind (Key_gen.email ()) (Rresult.R.to_option <.> Emile.of_string)
-               ; LE.account_seed= Key_gen.account_seed ()
-               ; LE.account_key_type= `ED25519
-               ; LE.account_key_bits= Some 4096
-               ; LE.hostname= (Domain_name.(host_exn <.> of_string_exn <.> Option.get) (Key_gen.hostname ())) }
+               { LE.certificate_seed = Key_gen.cert_seed ()
+               ; LE.certificate_key_type = key_type (Key_gen.cert_key_type ())
+               ; LE.certificate_key_bits = Some (Key_gen.cert_bits ())
+               ; LE.email = Option.bind (Key_gen.email ()) (fun e -> Emile.of_string e |> Result.to_option)
+               ; LE.account_seed = Key_gen.account_seed ()
+               ; LE.account_key_type = key_type (Key_gen.account_key_type ())
+               ; LE.account_key_bits = Some (Key_gen.account_bits ())
+               ; LE.hostname = Key_gen.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
                (LE.ctx
-                  ~gethostbyname:(fun dns domain_name -> DNS.gethostbyname dns domain_name >>? fun ipv4 -> Lwt.return_ok (Ipaddr.V4 ipv4))
-                  ~authenticator:(Rresult.R.failwith_error_msg (Nss.authenticator ()))
+                  ~gethostbyname
+                  ~authenticator:(Result.get_ok (Nss.authenticator ()))
                   (DNS.create stackv4v6) stackv4v6)
                >>? fun certificates ->
              Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in

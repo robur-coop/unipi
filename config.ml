@@ -1,7 +1,8 @@
 open Mirage
 
-(* boilerplate from https://github.com/mirage/ocaml-git.git unikernel/config.ml
-   (commit #3bfcf215f959b71580e5c0b655700bb9484aee8c) *)
+(* boilerplate from https://github.com/mirage/ocaml-git.git
+   file unikernel/empty-commit/config.ml
+   commit #ecdfc6dc13834f5f1a8e378718512eda6e67c982 *)
 type mimic = Mimic
 
 let mimic = typ Mimic
@@ -170,11 +171,27 @@ let production =
 
 let cert_seed =
   let doc = Key.Arg.info ~doc:"Let's encrypt certificate seed." ["cert-seed"] in
-  Key.(create "cert_seed" Arg.(opt (some string) None doc))
+  Key.(create "cert-seed" Arg.(opt (some string) None doc))
+
+let cert_key_type =
+  let doc = Key.Arg.info ~doc:"certificate key type" ["cert-key-type"] in
+  Key.(create "cert-key-type" Arg.(opt string "RSA" doc))
+
+let cert_bits =
+  let doc = Key.Arg.info ~doc:"certificate public key bits" ["cert-bits"] in
+  Key.(create "cert-bits" Arg.(opt int 4096 doc))
 
 let account_seed =
   let doc = Key.Arg.info ~doc:"Let's encrypt account seed." ["account-seed"] in
-  Key.(create "account_seed" Arg.(opt (some string) None doc))
+  Key.(create "account-seed" Arg.(opt (some string) None doc))
+
+let account_key_type =
+  let doc = Key.Arg.info ~doc:"account key type" ["account-key-type"] in
+  Key.(create "account-key-type" Arg.(opt string "RSA" doc))
+
+let account_bits =
+  let doc = Key.Arg.info ~doc:"account public key bits" ["account-bits"] in
+  Key.(create "account-bits" Arg.(opt int 4096 doc))
 
 let email =
   let doc = Key.Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
@@ -214,8 +231,10 @@ let () =
       abstract hook; abstract remote;
       abstract port; abstract tls;
       abstract ssh_seed; abstract ssh_authenticator;
-      abstract hostname; abstract production; abstract cert_seed;
-      abstract account_seed; abstract email;
+      abstract hostname; abstract production;
+      abstract cert_seed; abstract cert_key_type; abstract cert_bits;
+      abstract account_seed; abstract account_key_type; abstract account_bits;
+      abstract email;
     ])
   in
   register "unipi" [
