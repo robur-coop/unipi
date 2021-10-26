@@ -1,7 +1,8 @@
 open Mirage
 
-(* boilerplate from https://github.com/mirage/ocaml-git.git unikernel/config.ml
-   (commit #3bfcf215f959b71580e5c0b655700bb9484aee8c) *)
+(* boilerplate from https://github.com/mirage/ocaml-git.git
+   file unikernel/empty-commit/config.ml
+   commit #ecdfc6dc13834f5f1a8e378718512eda6e67c982 *)
 type mimic = Mimic
 
 let mimic = typ Mimic
