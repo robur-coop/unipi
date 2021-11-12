@@ -65,7 +65,7 @@ $ make
 ## Installing as binary
 
 Binaries are available at [Reproducible OPAM
-builds](https://builds.robur.coop/), see [Deploying binary MirageOS
+builds](https://builds.robur.coop/job/unipi/), see [Deploying binary MirageOS
 unikernels](https://hannes.robur.coop/Posts/Deploy) and [Reproducible MirageOS
 unikernel builds](https://hannes.robur.coop/Posts/ReproducibleOPAM) for details.
 
