@@ -8,7 +8,7 @@ module Main
   (M: Mirage_clock.MCLOCK)
   (P: Mirage_clock.PCLOCK)
   (Time: Mirage_time.S)
-  (Stack: Mirage_stack.V4V6) = struct
+  (Stack: Tcpip.Stack.V4V6) = struct
 
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Time)(Stack)
@@ -162,7 +162,7 @@ module Main
   let ignore_error _ ?request:_ _ _ = ()
   let ( >>? ) = Lwt_result.bind
 
-  let request_handler store upstream : _ -> Httpaf.Server_connection.request_handler =
+  let request_handler store upstream _flow : _ -> Httpaf.Server_connection.request_handler =
     let hook_url = Key_gen.hook () in
     if Astring.String.is_infix ~affix:"/" hook_url then begin
       Logs.err (fun m -> m "hook url contains /, which is not allowed");
@@ -186,10 +186,10 @@ module Main
        Logs.info (fun m -> m "store: %s" data);
        if Key_gen.tls () then begin
          let rec provision () =
-           Paf.init ~port:80 stackv4v6 >>= fun t ->
+           Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
            let service = Paf.http_service
              ~error_handler:ignore_error
-             LE.request_handler in
+             (fun _ -> LE.request_handler) in
            let stop = Lwt_switch.create () in
            let `Initialized th0 = Paf.serve ~stop service t in
            Logs.info (fun m ->
@@ -220,7 +220,7 @@ module Main
            | ((), Ok certificates) ->
              Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
              let tls = Tls.Config.server ~certificates () in
-             Paf.init ~port:(Key_gen.port ()) stackv4v6 >>= fun t ->
+             Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
              let service = Paf.https_service ~tls
                ~error_handler:ignore_error
                (request_handler store upstream) in
@@ -235,7 +235,7 @@ module Main
          in
          provision ()
        end else begin
-         Paf.init ~port:(Key_gen.port ()) stackv4v6 >>= fun t ->
+         Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
          let service = Paf.http_service
            ~error_handler:ignore_error
            (request_handler store upstream) in
