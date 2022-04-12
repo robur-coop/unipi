@@ -1,6 +1,7 @@
 open Lwt.Infix
 
 let argument_error = 64
+let database = Conan.Process.database ~tree:Conan_light.tree
 
 module Main
   (_ : sig end)
@@ -125,13 +126,18 @@ module Main
         else
           Lwt.async @@ fun () -> Store.find store (Store.Key.v path_list) >>= function
           | Some data ->
-            let mime_type = Magic_mime.lookup path in (* TODO(dinosaure): replace by conan. *)
+            let mime_type = match Conan_string.run ~database data with
+              | Ok metadata -> Conan.Metadata.mime metadata
+              | Error (`Msg err) -> None
+              | exception _ -> None in
             let headers = [
-              "content-type", mime_type ;
               "etag", Last_modified.etag () ;
               "last-modified", Last_modified.last_modified () ;
               "content-length", string_of_int (String.length data) ;
             ] in
+            let headers = match mime_type with
+              | Some mime_type -> ("content-type", mime_type) :: headers
+              | None -> headers in
             let headers = Httpaf.Headers.of_list headers in
             let resp = Httpaf.Response.create ~headers `OK in
             Httpaf.Reqd.respond_with_string reqd resp data ;

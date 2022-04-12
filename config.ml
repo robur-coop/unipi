@@ -78,6 +78,8 @@ let packages = [
   package ~min:"0.3.0" "letsencrypt";
   package "paf" ~min:"0.0.8" ~sublibs:[ "mirage" ];
   package "paf-le" ~min:"0.0.8";
+  package "conan" ~min:"0.0.2" ~sublibs:[ "string" ];
+  package "conan-database" ~min:"0.0.2" ~sublibs:[ "light" ];
 ]
 
 let stack = generic_stackv4v6 default_network
