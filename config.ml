@@ -221,7 +221,7 @@ let packages = [
   package ~min:"3.7.0" "git-paf";
   package ~min:"3.7.0" "git";
   package ~min:"3.7.0" ~max:"3.8.0" "git-mirage";
-  package ~min:"2.10.0" ~max:"3.0.0" "irmin-mirage-git";
+  package ~min:"2.10.0" "irmin-mirage-git";
   package "tls-mirage";
   package "magic-mime";
   package "logs";
@@ -229,7 +229,7 @@ let packages = [
   package "awa-mirage";
   package ~min:"3.7.0" "git-mirage";
   package ~min:"0.3.0" "letsencrypt";
-  package "paf" ~min:"0.0.8" ~sublibs:[ "mirage" ];
+  package "paf" ~min:"0.0.8" ~max:"0.0.9" ~sublibs:[ "mirage" ];
   package "paf-le" ~min:"0.0.8";
 ]
 
