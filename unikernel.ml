@@ -148,15 +148,25 @@ module Main
       let request = Httpaf.Reqd.request reqd in
       let port = if port = 443 then None else Some port in
       let path = request.Httpaf.Request.target in
-      let new_uri = Uri.make ~scheme:"https" ?host:(Key_gen.hostname ()) ?port ~path () in
-      (* TODO(dinosaure): check it. *)
-      Logs.info (fun f -> f "[%s] -> [%s]"
-                    path (Uri.to_string new_uri));
-      let headers =
-        Httpaf.Headers.of_list
-          [ "location", (Uri.to_string new_uri) ] in
-      let resp = Httpaf.Response.create ~headers `Moved_permanently in
-      respond_with_empty reqd resp
+      let response =
+        Option.fold
+          ~none:(
+            Logs.info (fun f -> f "redirect: no host header in request");
+            Httpaf.Response.create `Bad_request)
+          ~some:(fun host ->
+              let new_uri = Uri.make ~scheme:"https" ~host ?port ~path () in
+              Logs.info (fun f -> f "[%s] -> [%s]"
+                            path (Uri.to_string new_uri));
+              let headers =
+                Httpaf.Headers.of_list
+                  [ "location", (Uri.to_string new_uri) ] in
+              Httpaf.Response.create ~headers `Moved_permanently)
+          (Option.fold
+             ~none:(Httpaf.Headers.get request.Httpaf.Request.headers "host")
+             ~some:(fun a -> Some a)
+             (Key_gen.hostname ()))
+      in
+      respond_with_empty reqd response
   end
 
   let ignore_error _ ?request:_ _ _ = ()
