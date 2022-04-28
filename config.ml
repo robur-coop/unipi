@@ -161,6 +161,10 @@ let port =
   let doc = Key.Arg.info ~doc:"HTTP listen port." ["port"] in
   Key.(create "port" Arg.(opt int 80 doc))
 
+let https_port =
+  let doc = Key.Arg.info ~doc:"HTTPS listen port." ["https-port"] in
+  Key.(create "https-port" Arg.(opt int 443 doc))
+
 let tls =
   let doc = Key.Arg.info ~doc:"Enable TLS." ["tls"] in
   Key.(create "tls" Arg.(opt bool false doc))
@@ -253,7 +257,7 @@ let mimic_impl =
 let () =
   let keys = Key.([
       abstract hook; abstract remote;
-      abstract port; abstract tls;
+      abstract port; abstract https_port; abstract tls;
       abstract hostname; abstract production;
       abstract cert_seed; abstract cert_key_type; abstract cert_bits;
       abstract account_seed; abstract account_key_type; abstract account_bits;

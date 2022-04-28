@@ -144,7 +144,7 @@ module Main
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
 
-    let redirect port _ reqd =
+    let redirect port _ _ reqd =
       let request = Httpaf.Reqd.request reqd in
       let port = if port = 443 then None else Some port in
       let path = request.Httpaf.Request.target in
@@ -220,17 +220,24 @@ module Main
            | ((), Ok certificates) ->
              Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
              let tls = Tls.Config.server ~certificates () in
-             Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+             Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
              let service = Paf.https_service ~tls
                ~error_handler:ignore_error
                (request_handler store upstream) in
              let stop = Lwt_switch.create () in
-             let `Initialized th = Paf.serve ~stop service t in
+             let `Initialized th0 = Paf.serve ~stop service t in
              Logs.info (fun m ->
                  m "listening on %d/HTTPS" (Key_gen.port ()));
-             Lwt.both th
-               (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop)
-               >>= fun ((), ()) ->
+             Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+             let service = Paf.http_service
+                 ~error_handler:ignore_error
+                 (Dispatch.redirect (Key_gen.https_port ())) in
+             let `Initialized th1 = Paf.serve ~stop service t in
+             Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
+                           (Key_gen.port ()) (Key_gen.https_port ()));
+             Lwt.join [ th0 ; th1 ;
+                        (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
+               >>= fun () ->
              provision ()
          in
          provision ()
