@@ -98,7 +98,7 @@ module Main
   module Dispatch = struct
     let dispatch store hookf hook_url _conn reqd =
       let request = Httpaf.Reqd.request reqd in
-      let path = request.Httpaf.Request.target in
+      let path = Uri.path (Uri.of_string request.Httpaf.Request.target) in
       let path = if String.equal path "/" then "index.html" else path in
       Logs.info (fun f -> f "requested %s" path);
       match Astring.String.cuts ~sep:"/" ~empty:false path with
