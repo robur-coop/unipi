@@ -8,7 +8,7 @@ freebsd_task:
       - OCAML_VERSION: 4.10.0
   pkg_install_script: pkg install -y ocaml-opam gmp gmake pkgconf bash
   ocaml_script: opam init -a --comp=$OCAML_VERSION
-  mirage_script: eval `opam env` && opam install -y mirage lwt
+  mirage_script: eval `opam env` && opam install -y "mirage<4" lwt
   configure_script: eval `opam env` && mirage configure -t hvt --no-depext
   depend_script: eval `opam env` && make depend
   build_script: eval `opam env` && mirage build
