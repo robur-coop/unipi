@@ -221,9 +221,7 @@ let email =
   let doc = Key.Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
   Key.(create "email" Arg.(opt (some string) None doc))
 
-let packages =
-  let paf_pin = "git+https://github.com/hannesm/paf-le-chien.git#0.0.8" in
-  [
+let packages = [
   package ~min:"3.7.0" "git-paf";
   package ~min:"3.7.0" "git";
   package ~min:"3.7.0" ~max:"3.8.0" "git-mirage";
@@ -235,8 +233,8 @@ let packages =
   package "awa-mirage";
   package ~min:"3.7.0" "git-mirage";
   package ~min:"0.3.0" "letsencrypt";
-  package "paf" ~pin:paf_pin ~sublibs:[ "mirage" ];
-  package "paf-le" ~pin:paf_pin;
+  package "paf" ~min:"0.0.8-1" ~max:"0.0.9" ~sublibs:[ "mirage" ];
+  package "paf-le" ~min:"0.0.8-1" ~max:"0.0.9";
 ]
 
 let stack = generic_stackv4v6 default_network
