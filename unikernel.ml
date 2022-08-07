@@ -125,7 +125,15 @@ module Main
         else
           Lwt.async @@ fun () -> Store.find store (Store.Key.v path_list) >>= function
           | Some data ->
-            let mime_type = Magic_mime.lookup path in (* TODO(dinosaure): replace by conan. *)
+            let mime_type =
+              match Magic_mime.lookup path with
+              (* mime types from nginx:
+                   http://nginx.org/en/docs/http/ngx_http_charset_module.html#charset_types *)
+              | "text/html" | "text/xml" | "text/plain" | "text/vnd.wap.wml"
+              | "application/javascript" | "application/rss+xml" as content_type ->
+                content_type ^ "; charset=utf-8" (* default to utf-8 *)
+              | content_type -> content_type
+            in (* TODO(dinosaure): replace by conan. *)
             let headers = [
               "content-type", mime_type ;
               "etag", Last_modified.etag () ;
