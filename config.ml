@@ -118,7 +118,7 @@ let git_client =
   let git = git_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
   let tcp = tcpv4v6_of_stackv4v6 stack in
   merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh ~key:ssh_key (tcpv4v6_of_stackv4v6 stack) git)
+    (merge_git_clients (git_ssh ~key:ssh_key ~authenticator:ssh_authenticator tcp git)
        (git_http ~authenticator:tls_authenticator tcp git))
 
 let () =
