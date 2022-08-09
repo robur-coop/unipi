@@ -33,16 +33,19 @@ let ssh_authenticator =
   Key.(create "ssh_authenticator" Arg.(opt (some string) None doc))
 
 let tls_authenticator =
-  let doc = Key.Arg.info ~doc:"TLS host authenticator." ["tls-authenticator"] in
-  Key.(create "https_authenticator" Arg.(opt (some string) None doc))
-
-let tls_key_fingerprint =
-  let doc = Key.Arg.info ~doc:"The fingerprint of the TLS key of the git remote." [ "tls-key-fingerprint" ] in
-  Key.(create "tls_key_fingerprint" Arg.(opt (some string) None doc))
-
-let tls_cert_fingerprint =
-  let doc = Key.Arg.info ~doc:"The fingerprint of the TLS certificate of the git remote." [ "tls-cert-fingerprint" ] in
-  Key.(create "tls_cert_fingerprint" Arg.(opt (some string) None doc))
+  (* this will not look the same in the help printout *)
+  let doc = "TLS host authenticator. The format of it is:
+    - [none] no authentication
+    - key(:<hash>)?:<b64-encoded fingerprint> to authenticate via the key
+      fingerprint
+    - cert(:<hash>)?:<b64-encoded fingerprint> to authenticate via the cert
+      fingerprint
+    - trust-anchor(:<der-encoded cert>)+ to authenticate via a list of
+      certificates - By default, we use X.509 trust anchors extracted from
+      Mozilla's NSS"
+  in
+  let doc = Key.Arg.info ~doc ["tls-authenticator"] in
+  Key.(create "tls-authenticator" Arg.(opt (some string) None doc))
 
 let hostname =
   let doc = Key.Arg.info ~doc:"Host name." ["hostname"] in
