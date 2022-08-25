@@ -34,15 +34,7 @@ let ssh_authenticator =
 
 let tls_authenticator =
   (* this will not look the same in the help printout *)
-  let doc = "TLS host authenticator. The format of it is:
-    - [none] no authentication
-    - key(:<hash>)?:<b64-encoded fingerprint> to authenticate via the key
-      fingerprint
-    - cert(:<hash>)?:<b64-encoded fingerprint> to authenticate via the cert
-      fingerprint
-    - trust-anchor(:<der-encoded cert>)+ to authenticate via a list of
-      certificates - By default, we use X.509 trust anchors extracted from
-      Mozilla's NSS"
+  let doc = "TLS host authenticator. See git_http in lib/mirage/mirage.mli for a description of the format."
   in
   let doc = Key.Arg.info ~doc ["tls-authenticator"] in
   Key.(create "tls-authenticator" Arg.(opt (some string) None doc))
