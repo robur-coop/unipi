@@ -11,11 +11,11 @@ module Main
   (Stack: Tcpip.Stack.V4V6) = struct
 
   module Nss = Ca_certs_nss.Make(P)
-  module Paf = Paf_mirage.Make(Time)(Stack)
+  module Paf = Paf_mirage.Make(Time)(Stack.TCP)
   module LE = LE.Make(Time)(Stack)
   module DNS = Dns_client_mirage.Make(Random)(Time)(M)(P)(Stack)
-  module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
-  module Sync = Irmin.Sync(Store)
+  module Store = Irmin_mirage_git.Mem.KV.Make(Irmin.Contents.String)
+  module Sync = Irmin.Sync.Make(Store)
 
   module Last_modified = struct
     let ptime_to_http_date ptime =
@@ -39,7 +39,7 @@ module Main
       let last_commit_date =
         let info = Store.Commit.info head in
         let ptime =
-          match Ptime.of_float_s (Int64.to_float (Irmin.Info.date info)) with
+          match Ptime.of_float_s (Int64.to_float (Store.Info.date info)) with
           | None -> Ptime.v (P.now_d_ps ())
           | Some d -> d
         in
@@ -74,7 +74,7 @@ module Main
       let config = Irmin_mem.config () in
       Store.Repo.v config >>= fun r ->
       (match branch with
-       | None -> Store.master r
+       | None -> Store.main r
        | Some branch -> Store.of_branch r branch) >|= fun repo ->
       repo, Store.remote ~ctx uri
 
@@ -123,7 +123,7 @@ module Main
           let resp = Httpaf.Response.create `Not_modified in
           respond_with_empty reqd resp
         else
-          Lwt.async @@ fun () -> Store.find store (Store.Key.v path_list) >>= function
+          Lwt.async @@ fun () -> Store.find store (Store.Path.v path_list) >>= function
           | Some data ->
             let mime_type =
               match Magic_mime.lookup path with
