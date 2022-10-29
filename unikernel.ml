@@ -96,6 +96,28 @@ module Main
     Httpaf.Reqd.respond_with_string reqd resp ""
 
   module Dispatch = struct
+
+    module M = Map.Make(String)
+
+    let mime_type =
+      let overwrite =
+        List.fold_left (fun acc (k, v) ->
+            M.add k v acc)
+          M.empty (Key_gen.mime_type ())
+      and default = Key_gen.default_mime_type ()
+      in
+      fun path ->
+        match M.find_opt path overwrite with
+        | Some v -> v
+        | None ->
+          match Magic_mime.lookup ~default path with
+          (* mime types from nginx:
+             http://nginx.org/en/docs/http/ngx_http_charset_module.html#charset_types *)
+          | "text/html" | "text/xml" | "text/plain" | "text/vnd.wap.wml"
+          | "application/javascript" | "application/rss+xml" as content_type ->
+            content_type ^ "; charset=utf-8" (* default to utf-8 *)
+          | content_type -> content_type
+
     let dispatch store hookf hook_url _conn reqd =
       let request = Httpaf.Reqd.request reqd in
       let path = Uri.path (Uri.of_string request.Httpaf.Request.target) in
@@ -125,17 +147,8 @@ module Main
         else
           Lwt.async @@ fun () -> Store.find store (Store.Path.v path_list) >>= function
           | Some data ->
-            let mime_type =
-              match Magic_mime.lookup path with
-              (* mime types from nginx:
-                   http://nginx.org/en/docs/http/ngx_http_charset_module.html#charset_types *)
-              | "text/html" | "text/xml" | "text/plain" | "text/vnd.wap.wml"
-              | "application/javascript" | "application/rss+xml" as content_type ->
-                content_type ^ "; charset=utf-8" (* default to utf-8 *)
-              | content_type -> content_type
-            in (* TODO(dinosaure): replace by conan. *)
             let headers = [
-              "content-type", mime_type ;
+              "content-type", mime_type path ;
               "etag", Last_modified.etag () ;
               "last-modified", Last_modified.last_modified () ;
               "content-length", string_of_int (String.length data) ;
@@ -147,7 +160,7 @@ module Main
           | None ->
             let data = "Resource not found " ^ path in
             let headers = Httpaf.Headers.of_list
-              [ "content-length", string_of_int (String.length data) ] in
+                [ "content-length", string_of_int (String.length data) ] in
             let resp = Httpaf.Response.create ~headers `Not_found in
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
