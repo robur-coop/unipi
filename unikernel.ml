@@ -11,7 +11,7 @@ module Main
   (Stack: Tcpip.Stack.V4V6) = struct
 
   module Nss = Ca_certs_nss.Make(P)
-  module Paf = Paf_mirage.Make(Time)(Stack.TCP)
+  module Paf = Paf_mirage.Make(Stack.TCP)
   module LE = LE.Make(Time)(Stack)
   module DNS = Dns_client_mirage.Make(Random)(Time)(M)(P)(Stack)
   module Store = Irmin_mirage_git.Mem.KV.Make(Irmin.Contents.String)

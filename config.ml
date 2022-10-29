@@ -85,8 +85,8 @@ let packages = [
   package "awa";
   package "awa-mirage";
   package ~min:"0.3.0" "letsencrypt";
-  package "paf" ~min:"0.0.9" ~sublibs:[ "mirage" ];
-  package "paf-le" ~min:"0.0.9";
+  package ~min:"0.3.0" "paf" ~sublibs:[ "mirage" ];
+  package ~min:"0.3.0" "paf-le";
 ]
 
 let unipi =
