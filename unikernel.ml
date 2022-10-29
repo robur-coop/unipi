@@ -121,7 +121,6 @@ module Main
     let dispatch store hookf hook_url _conn reqd =
       let request = Httpaf.Reqd.request reqd in
       let path = Uri.path (Uri.of_string request.Httpaf.Request.target) in
-      let path = if String.equal path "/" then "index.html" else path in
       Logs.info (fun f -> f "requested %s" path);
       match Astring.String.cuts ~sep:"/" ~empty:false path with
       | [ h ] when String.equal hook_url h ->
@@ -145,7 +144,16 @@ module Main
           let resp = Httpaf.Response.create `Not_modified in
           respond_with_empty reqd resp
         else
-          Lwt.async @@ fun () -> Store.find store (Store.Path.v path_list) >>= function
+          Lwt.async @@ fun () ->
+          let find path_list =
+            let lookup path_list =
+              Store.find store (Store.Path.v path_list)
+            in
+            lookup path_list >>= function
+            | Some data -> Lwt.return (Some data)
+            | None -> lookup (path_list @ [ "index.html" ])
+          in
+          find path_list >>= function
           | Some data ->
             let headers = [
               "content-type", mime_type path ;
