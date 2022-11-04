@@ -107,16 +107,18 @@ module Main
       and default = Key_gen.default_mime_type ()
       in
       fun path ->
-        match M.find_opt path overwrite with
-        | Some v -> v
-        | None ->
-          match Magic_mime.lookup ~default path with
-          (* mime types from nginx:
-             http://nginx.org/en/docs/http/ngx_http_charset_module.html#charset_types *)
-          | "text/html" | "text/xml" | "text/plain" | "text/vnd.wap.wml"
-          | "application/javascript" | "application/rss+xml" as content_type ->
-            content_type ^ "; charset=utf-8" (* default to utf-8 *)
-          | content_type -> content_type
+        let mime_type =
+          match M.find_opt path overwrite with
+          | Some v -> v
+          | None -> Magic_mime.lookup ~default path
+        in
+        match mime_type with
+        (* mime types from nginx:
+           http://nginx.org/en/docs/http/ngx_http_charset_module.html#charset_types *)
+        | "text/html" | "text/xml" | "text/plain" | "text/vnd.wap.wml"
+        | "application/javascript" | "application/rss+xml" as content_type ->
+          content_type ^ "; charset=utf-8" (* default to utf-8 *)
+        | content_type -> content_type
 
     let dispatch store hookf hook_url _conn reqd =
       let request = Httpaf.Reqd.request reqd in
