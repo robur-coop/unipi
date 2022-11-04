@@ -116,7 +116,8 @@ module Main
         (* mime types from nginx:
            http://nginx.org/en/docs/http/ngx_http_charset_module.html#charset_types *)
         | "text/html" | "text/xml" | "text/plain" | "text/vnd.wap.wml"
-        | "application/javascript" | "application/rss+xml" as content_type ->
+        | "application/javascript" | "application/rss+xml" | "application/atom+xml"
+        as content_type ->
           content_type ^ "; charset=utf-8" (* default to utf-8 *)
         | content_type -> content_type
 
