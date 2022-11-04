@@ -86,7 +86,7 @@ let email =
 let packages = [
   package ~min:"3.7.0" "git-paf";
   package ~min:"3.7.0" "git";
-  package ~min:"3.0.0" "irmin-mirage-git";
+  package "git-kv";
   package "tls-mirage";
   package ~min:"1.3.0" "magic-mime";
   package "logs";
