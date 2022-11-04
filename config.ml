@@ -1,5 +1,13 @@
 open Mirage
 
+let default_mime_type =
+  let doc = Key.Arg.info ~doc:"Default mime-type to serve." ["default-mime-type"] in
+  Key.(create "default-mime-type" Arg.(opt string "application/octet-stream" doc))
+
+let mime_type =
+  let doc = Key.Arg.info ~doc:"Overwrite mime-type for a path." ["mime-type"] in
+  Key.(create "mime-type" Arg.(opt_all (pair ~sep:':' string string) doc))
+
 let hook =
   let doc = Key.Arg.info ~doc:"Webhook (no / allowed)." ["hook"] in
   Key.(create "hook" Arg.(opt string "hook" doc))
@@ -80,7 +88,7 @@ let packages = [
   package ~min:"3.7.0" "git";
   package ~min:"3.0.0" "irmin-mirage-git";
   package "tls-mirage";
-  package "magic-mime";
+  package ~min:"1.3.0" "magic-mime";
   package "logs";
   package "awa";
   package "awa-mirage";
@@ -91,7 +99,7 @@ let packages = [
 
 let unipi =
   let keys = Key.([
-      v hook; v remote;
+      v default_mime_type; v mime_type; v hook; v remote;
       v port; v https_port; v tls;
       v hostname; v production;
       v cert_seed; v cert_key_type; v cert_bits;
