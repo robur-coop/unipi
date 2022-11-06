@@ -207,7 +207,15 @@ module Main
       respond_with_empty reqd response
   end
 
-  let ignore_error _ ?request:_ _ _ = ()
+  let pp_error ppf = function
+    | #Httpaf.Status.t as code -> Httpaf.Status.pp_hum ppf code
+    | `Exn exn -> Fmt.pf ppf "exception %s" (Printexc.to_string exn)
+
+  let error_handler _dst ?request err _ =
+    Logs.err (fun m -> m "error %a while processing request %a"
+                 pp_error err
+                 Fmt.(option ~none:(any "unknown") Httpaf.Request.pp_hum) request)
+
   let ( >>? ) = Lwt_result.bind
 
   let request_handler store upstream _flow : _ -> Httpaf.Server_connection.request_handler =
@@ -235,9 +243,9 @@ module Main
        if Key_gen.tls () then begin
          let rec provision () =
            Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
-           let service = Paf.http_service
-             ~error_handler:ignore_error
-             (fun _ -> LE.request_handler) in
+           let service =
+             Paf.http_service ~error_handler (fun _ -> LE.request_handler)
+           in
            let stop = Lwt_switch.create () in
            let `Initialized th0 = Paf.serve ~stop service t in
            Logs.info (fun m ->
@@ -269,17 +277,19 @@ module Main
              Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
              let tls = Tls.Config.server ~certificates () in
              Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
-             let service = Paf.https_service ~tls
-               ~error_handler:ignore_error
-               (request_handler store upstream) in
+             let service =
+               Paf.https_service ~tls ~error_handler
+                 (request_handler store upstream)
+             in
              let stop = Lwt_switch.create () in
              let `Initialized th0 = Paf.serve ~stop service t in
              Logs.info (fun m ->
                  m "listening on %d/HTTPS" (Key_gen.port ()));
              Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
-             let service = Paf.http_service
-                 ~error_handler:ignore_error
-                 (Dispatch.redirect (Key_gen.https_port ())) in
+             let service =
+               let to_port = (Key_gen.https_port ()) in
+               Paf.http_service ~error_handler (Dispatch.redirect to_port)
+             in
              let `Initialized th1 = Paf.serve ~stop service t in
              Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
                            (Key_gen.port ()) (Key_gen.https_port ()));
@@ -291,9 +301,9 @@ module Main
          provision ()
        end else begin
          Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
-         let service = Paf.http_service
-           ~error_handler:ignore_error
-           (request_handler store upstream) in
+         let service =
+           Paf.http_service ~error_handler (request_handler store upstream)
+         in
          let `Initialized th = Paf.serve service t in
          Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
          (th >|= fun v -> Ok v)
