@@ -98,15 +98,14 @@ let packages = [
 ]
 
 let unipi =
-  let keys = Key.([
-      v default_mime_type; v mime_type; v hook; v remote;
-      v port; v https_port; v tls;
-      v hostname; v production;
-      v cert_seed; v cert_key_type; v cert_bits;
-      v account_seed; v account_key_type; v account_bits;
-      v email;
-    ])
-  in
+  let keys = [
+    Key.v default_mime_type; Key.v mime_type; Key.v hook; Key.v remote;
+    Key.v port; Key.v https_port; Key.v tls;
+    Key.v hostname; Key.v production;
+    Key.v cert_seed; Key.v cert_key_type; Key.v cert_bits;
+    Key.v account_seed; Key.v account_key_type; Key.v account_bits;
+    Key.v email;
+  ] in
   foreign "Unikernel.Main"
     ~packages ~keys
     (git_client @-> random @-> mclock @-> pclock @-> time @-> stackv4v6 @-> job)
