@@ -101,16 +101,18 @@ module Main
 
     let mime_type =
       let overwrite =
-        List.fold_left (fun acc (k, v) ->
-            M.add k v acc)
-          M.empty (Key_gen.mime_type ())
-      and default = Key_gen.default_mime_type ()
+        lazy (
+          List.fold_left (fun acc (k, v) ->
+              M.add k v acc)
+            M.empty (Key_gen.mime_type ()))
+      and default =
+        lazy (Key_gen.default_mime_type ())
       in
       fun path ->
         let mime_type =
-          match M.find_opt path overwrite with
+          match M.find_opt path (Lazy.force overwrite) with
           | Some v -> v
-          | None -> Magic_mime.lookup ~default path
+          | None -> Magic_mime.lookup ~default:(Lazy.force default) path
         in
         match mime_type with
         (* mime types from nginx:
