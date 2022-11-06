@@ -3,12 +3,14 @@ open Lwt.Infix
 let argument_error = 64
 
 module Main
+  (C: Mirage_console.S)
   (_ : sig end)
   (Random: Mirage_random.S)
   (M: Mirage_clock.MCLOCK)
   (P: Mirage_clock.PCLOCK)
   (Time: Mirage_time.S)
-  (Stack: Tcpip.Stack.V4V6) = struct
+  (Stack: Tcpip.Stack.V4V6)
+  (Management: Tcpip.Stack.V4V6) = struct
 
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Stack.TCP)
@@ -51,10 +53,19 @@ module Main
     let etag () = snd !last
   end
 
+  let http_status =
+    let f { Httpaf.Response.status ; _ } =
+      let code = Httpaf.Status.to_code status in
+      Printf.sprintf "%dxx" (code / 100)
+    in
+    let src = Mirage_monitoring.counter_metrics ~f "http_response" in
+    (fun r -> Metrics.add src (fun x -> x) (fun d -> d r))
+
   let respond_with_empty reqd resp =
     let hdr = Httpaf.Headers.add_unless_exists resp.Httpaf.Response.headers
       "connection" "close" in
     let resp = { resp with Httpaf.Response.headers= hdr } in
+    http_status resp;
     Httpaf.Reqd.respond_with_string reqd resp ""
 
   module Dispatch = struct
@@ -98,12 +109,14 @@ module Main
             let headers = Httpaf.Headers.of_list
               [ "content-length", string_of_int (String.length data) ] in
             let resp = Httpaf.Response.create ~headers `OK in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error (`Msg msg) ->
             let headers = Httpaf.Headers.of_list
               [ "content-length", string_of_int (String.length msg) ] in
             let resp = Httpaf.Response.create ~headers `Internal_server_error in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp msg ;
             Lwt.return_unit
         end
@@ -134,6 +147,7 @@ module Main
             ] in
             let headers = Httpaf.Headers.of_list headers in
             let resp = Httpaf.Response.create ~headers `OK in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error _ ->
@@ -141,6 +155,7 @@ module Main
             let headers = Httpaf.Headers.of_list
                 [ "content-length", string_of_int (String.length data) ] in
             let resp = Httpaf.Response.create ~headers `Not_found in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
 
@@ -178,6 +193,11 @@ module Main
     | `Exn exn -> Fmt.pf ppf "exception %s" (Printexc.to_string exn)
 
   let error_handler _dst ?request err _ =
+    let resp_code = match err with
+      | #Httpaf.Status.t as code -> code
+      | `Exn _ -> `Internal_server_error
+    in
+    http_status (Httpaf.Response.create resp_code);
     Logs.err (fun m -> m "error %a while processing request %a"
                  pp_error err
                  Fmt.(option ~none:(any "unknown") Httpaf.Request.pp_hum) request)
@@ -202,10 +222,22 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit argument_error
 
-  let start git_ctx () () () () stackv4v6 =
+  module Monitoring = Mirage_monitoring.Make(Time)(P)(Management)
+  module Syslog = Logs_syslog_mirage.Udp(C)(P)(Management)
+
+  let start c git_ctx () () () () stackv4v6 management =
+    let hostname = Key_gen.name ()
+    and syslog = Key_gen.syslog ()
+    and monitor = Key_gen.monitor ()
+    in
+    (match syslog with
+     | None -> Logs.warn (fun m -> m "no syslog specified, dumping on stdout")
+     | Some ip -> Logs.set_reporter (Syslog.create c management ip ~hostname ()));
+    (match monitor with
+     | None -> Logs.warn (fun m -> m "no monitor specified, not outputting statistics")
+     | Some ip -> Monitoring.create ~hostname ip management);
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
-    Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
