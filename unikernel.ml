@@ -87,7 +87,9 @@ module Main
 
     let dispatch store hookf hook_url _conn reqd =
       let request = Httpaf.Reqd.request reqd in
-      let path = Uri.path (Uri.of_string request.Httpaf.Request.target) in
+      let path =
+        Uri.(pct_decode (path (of_string request.Httpaf.Request.target)))
+      in
       Logs.info (fun f -> f "requested %s" path);
       if String.equal hook_url path then
         begin
