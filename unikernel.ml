@@ -14,8 +14,7 @@ module Main
   module Paf = Paf_mirage.Make(Stack.TCP)
   module LE = LE.Make(Time)(Stack)
   module DNS = Dns_client_mirage.Make(Random)(Time)(M)(P)(Stack)
-  module Store = Irmin_mirage_git.Mem.KV.Make(Irmin.Contents.String)
-  module Sync = Irmin.Sync.Make(Store)
+  module Store = Git_kv.Make(P)
 
   module Last_modified = struct
     let ptime_to_http_date ptime =
@@ -35,19 +34,11 @@ module Main
 
     (* cache control: all resources use last-modified + etag of last commit *)
     let retrieve_last_commit store =
-      Store.Head.get store >|= fun head ->
-      let last_commit_date =
-        let info = Store.Commit.info head in
-        let ptime =
-          match Ptime.of_float_s (Int64.to_float (Store.Info.date info)) with
-          | None -> Ptime.v (P.now_d_ps ())
-          | Some d -> d
-        in
-        ptime_to_http_date ptime
-      and last_commit_hash =
-        Fmt.to_to_string (Irmin.Type.pp Store.Hash.t) (Store.Commit.hash head)
-      in
-      last := (last_commit_date, last_commit_hash)
+      Store.digest store Mirage_kv.Key.empty >>= fun last_hash ->
+      Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
+      let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Pclock.now_d_ps ()) r in
+      let last_date = ptime_to_http_date (Ptime.v v) in
+      last := (last_date, Result.get_ok last_hash)
 
     let not_modified request =
       match Httpaf.Headers.get request.Httpaf.Request.headers "if-modified-since" with
@@ -58,35 +49,6 @@ module Main
 
     let last_modified () = fst !last
     let etag () = snd !last
-  end
-
-  module Remote = struct
-    let decompose_git_url () =
-      match String.split_on_char '#' (Key_gen.remote ()) with
-      | [ url ] -> url, None
-      | [ url ; branch ] -> url, Some branch
-      | _ ->
-        Logs.err (fun m -> m "expected at most a single # in remote");
-        exit argument_error
-
-    let connect ctx =
-      let uri, branch = decompose_git_url () in
-      let config = Irmin_mem.config () in
-      Store.Repo.v config >>= fun r ->
-      (match branch with
-       | None -> Store.main r
-       | Some branch -> Store.of_branch r branch) >|= fun repo ->
-      repo, Store.remote ~ctx uri
-
-    let pull store upstream =
-      Logs.info (fun m -> m "pulling from remote!");
-      Sync.pull ~depth:1 store upstream `Set >>= fun r ->
-      Last_modified.retrieve_last_commit store >|= fun () ->
-      match r with
-      | Ok (`Head _ as s) -> Ok (Fmt.str "pulled %a" Sync.pp_status s)
-      | Ok `Empty -> Error (`Msg "pulled empty repository")
-      | Error (`Msg e) -> Error (`Msg ("pull error " ^ e))
-      | Error (`Conflict msg) -> Error (`Msg ("pull conflict " ^ msg))
   end
 
   let respond_with_empty reqd resp =
@@ -127,8 +89,7 @@ module Main
       let request = Httpaf.Reqd.request reqd in
       let path = Uri.path (Uri.of_string request.Httpaf.Request.target) in
       Logs.info (fun f -> f "requested %s" path);
-      match Astring.String.cuts ~sep:"/" ~empty:false path with
-      | [ h ] when String.equal hook_url h ->
+      if String.equal hook_url path then
         begin
           Lwt.async @@ fun () -> hookf () >>= function
           | Ok data ->
@@ -144,22 +105,22 @@ module Main
             Httpaf.Reqd.respond_with_string reqd resp msg ;
             Lwt.return_unit
         end
-      | path_list ->
+      else
         if Last_modified.not_modified request then
           let resp = Httpaf.Response.create `Not_modified in
           respond_with_empty reqd resp
         else
           Lwt.async @@ fun () ->
-          let find path_list =
-            let lookup path_list =
-              Store.find store (Store.Path.v path_list)
+          let find path =
+            let lookup path =
+              Store.get store (Mirage_kv.Key.v path)
             in
-            lookup path_list >>= function
-            | Some data -> Lwt.return (Some data)
-            | None -> lookup (path_list @ [ "index.html" ])
+            lookup path >>= function
+            | Ok _ as r -> Lwt.return r
+            | Error _ -> lookup (path ^ "/index.html")
           in
-          find path_list >>= function
-          | Some data ->
+          find path >>= function
+          | Ok data ->
             let headers = [
               "content-type", mime_type path ;
               "etag", Last_modified.etag () ;
@@ -170,7 +131,7 @@ module Main
             let resp = Httpaf.Response.create ~headers `OK in
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
-          | None ->
+          | Error _ ->
             let data = "Resource not found " ^ path in
             let headers = Httpaf.Headers.of_list
                 [ "content-length", string_of_int (String.length data) ] in
@@ -218,14 +179,25 @@ module Main
 
   let ( >>? ) = Lwt_result.bind
 
-  let request_handler store upstream _flow : _ -> Httpaf.Server_connection.request_handler =
-    let hook_url = Key_gen.hook () in
-    if Astring.String.is_infix ~affix:"/" hook_url then begin
-      Logs.err (fun m -> m "hook url contains /, which is not allowed");
-      exit argument_error
-    end else
-      let hookf () = Remote.pull store upstream in
-      Dispatch.dispatch store hookf hook_url
+  let hook_url =
+    lazy
+      (let hook_url = Key_gen.hook () in
+       if Astring.String.is_infix ~affix:"/" hook_url then begin
+         Logs.err (fun m -> m "hook url contains /, which is not allowed");
+         exit argument_error
+       end else
+         hook_url)
+
+  let request_handler store _flow : _ -> Httpaf.Server_connection.request_handler =
+    let hookf () =
+      Git_kv.pull store >>= function
+      | Ok [] -> Lwt.return_ok "pulled, no changes"
+      | Ok _ ->
+        Last_modified.retrieve_last_commit store >>= fun () ->
+        Lwt.return_ok ("pulled " ^ Last_modified.etag ())
+      | Error _ as e -> Lwt.return e
+    in
+    Dispatch.dispatch store hookf (Lazy.force hook_url)
 
   let key_type kt =
     match X509.Key_type.of_string kt with
@@ -235,11 +207,12 @@ module Main
       exit argument_error
 
   let start git_ctx () () () () stackv4v6 =
-    Remote.connect git_ctx >>= fun (store, upstream) ->
+    Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
+    Last_modified.retrieve_last_commit store >>= fun () ->
+    Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
-      (Remote.pull store upstream >>? fun data ->
-       Logs.info (fun m -> m "store: %s" data);
+      (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
        if Key_gen.tls () then begin
          let rec provision () =
            Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
@@ -278,8 +251,7 @@ module Main
              let tls = Tls.Config.server ~certificates () in
              Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
              let service =
-               Paf.https_service ~tls ~error_handler
-                 (request_handler store upstream)
+               Paf.https_service ~tls ~error_handler (request_handler store)
              in
              let stop = Lwt_switch.create () in
              let `Initialized th0 = Paf.serve ~stop service t in
@@ -302,7 +274,7 @@ module Main
        end else begin
          Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
          let service =
-           Paf.http_service ~error_handler (request_handler store upstream)
+           Paf.http_service ~error_handler (request_handler store)
          in
          let `Initialized th = Paf.serve service t in
          Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
