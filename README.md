@@ -4,9 +4,9 @@ Unipi is a MirageOS unikernel that provides the contents of a git repository via
 HTTP and HTTPS. It embeds (optional) let's encrypt provisioning.
 
 A webhook is provided to update the internal state of the git repository. An
-example deployment is [test.nqsb.io](https://test.nqsb.io), which serves the
-[ocaml-dns](https://github.com/mirage/ocaml-dns) documentation (using the
-gh-pages branch).
+example deployment is [robur.coop](https://robur.coop), which serves the
+[robur website](https://git.robur.io/robur/homepage-data) (using the
+pages branch).
 
 Some HTTP headers are added: "content-type", which value is looked up of the
 file ending using [magic-mime](https://github.com/mirage/ocaml-magic-mime/).
