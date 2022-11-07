@@ -9,8 +9,8 @@ let mime_type =
   Key.(create "mime-type" Arg.(opt_all (pair ~sep:':' string string) doc))
 
 let hook =
-  let doc = Key.Arg.info ~doc:"Webhook (no / allowed)." ["hook"] in
-  Key.(create "hook" Arg.(opt string "hook" doc))
+  let doc = Key.Arg.info ~doc:"Webhook for pulling the repository." ["hook"] in
+  Key.(create "hook" Arg.(opt string "/hook" doc))
 
 let remote =
   let doc = Key.Arg.info

@@ -181,15 +181,6 @@ module Main
 
   let ( >>? ) = Lwt_result.bind
 
-  let hook_url =
-    lazy
-      (let hook_url = Key_gen.hook () in
-       if Astring.String.is_infix ~affix:"/" hook_url then begin
-         Logs.err (fun m -> m "hook url contains /, which is not allowed");
-         exit argument_error
-       end else
-         hook_url)
-
   let request_handler store _flow : _ -> Httpaf.Server_connection.request_handler =
     let hookf () =
       Git_kv.pull store >>= function
@@ -199,7 +190,7 @@ module Main
         Lwt.return_ok ("pulled " ^ Last_modified.etag ())
       | Error _ as e -> Lwt.return e
     in
-    Dispatch.dispatch store hookf (Lazy.force hook_url)
+    Dispatch.dispatch store hookf (Key_gen.hook ())
 
   let key_type kt =
     match X509.Key_type.of_string kt with
