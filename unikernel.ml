@@ -119,7 +119,10 @@ module Main
             in
             lookup path >>= function
             | Ok r -> Lwt.return_ok (path, r)
-            | Error _ -> lookup (path ^ "/index.html")
+            | Error _ ->
+              let effective_path = path ^ "/index.html" in
+              Lwt_result.map (fun r -> effective_path, r)
+                (lookup effective_path)
           in
           find path >>= function
           | Ok (effective_path, data) ->
