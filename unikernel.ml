@@ -118,13 +118,13 @@ module Main
               Store.get store (Mirage_kv.Key.v path)
             in
             lookup path >>= function
-            | Ok _ as r -> Lwt.return r
+            | Ok r -> Lwt.return_ok (path, r)
             | Error _ -> lookup (path ^ "/index.html")
           in
           find path >>= function
-          | Ok data ->
+          | Ok (effective_path, data) ->
             let headers = [
-              "content-type", mime_type path ;
+              "content-type", mime_type effective_path ;
               "etag", Last_modified.etag () ;
               "last-modified", Last_modified.last_modified () ;
               "content-length", string_of_int (String.length data) ;
