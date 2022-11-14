@@ -35,6 +35,9 @@ module Main
     (* cache control: all resources use last-modified + etag of last commit *)
     let retrieve_last_commit store =
       Store.digest store Mirage_kv.Key.empty >>= function
+      | Error (`Not_found _) ->
+        let msg = Fmt.str "No commit found - are you on the correct branch?" in
+        failwith msg
       | Error err -> failwith @@ Fmt.str "%a" Store.pp_error err
       | Ok last_hash ->
         Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
