@@ -34,11 +34,13 @@ module Main
 
     (* cache control: all resources use last-modified + etag of last commit *)
     let retrieve_last_commit store =
-      Store.digest store Mirage_kv.Key.empty >>= fun last_hash ->
-      Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
-      let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Pclock.now_d_ps ()) r in
-      let last_date = ptime_to_http_date (Ptime.v v) in
-      last := (last_date, Result.get_ok last_hash)
+      Store.digest store Mirage_kv.Key.empty >>= function
+      | Error err -> failwith @@ Fmt.str "%a" Store.pp_error err
+      | Ok last_hash ->
+        Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
+        let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Pclock.now_d_ps ()) r in
+        let last_date = ptime_to_http_date (Ptime.v v) in
+        last := (last_date, last_hash)
 
     let not_modified request =
       match Httpaf.Headers.get request.Httpaf.Request.headers "if-modified-since" with
