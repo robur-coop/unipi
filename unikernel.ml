@@ -36,8 +36,8 @@ module Main
     let retrieve_last_commit store =
       Store.digest store Mirage_kv.Key.empty >>= fun last_hash ->
       Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
-      let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Pclock.now_d_ps ()) r in
-      let last_date = ptime_to_http_date (Ptime.v v) in
+      let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Ptime.v (Pclock.now_d_ps ())) r in
+      let last_date = ptime_to_http_date v in
       last := (last_date, Result.get_ok last_hash)
 
     let not_modified request =
