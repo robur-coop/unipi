@@ -27,6 +27,9 @@ die()
 
 
 OUT=output
+if [ ! -e "$OUT" ]; then
+    mkdir "$OUT"
+fi
 
 uname -a > "$OUT/platform.txt"
 date > "$OUT/run-time.txt"
