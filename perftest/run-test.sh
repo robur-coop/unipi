@@ -31,18 +31,18 @@ if [ ! -e "$OUT" ]; then
     mkdir "$OUT"
 fi
 
-uname -a > "$OUT/platform.txt"
-date > "$OUT/run-time.txt"
+uname -a > "$OUT"/platform.txt
+date > "$OUT"/time.txt
 
 if [ $(uname) = "FreeBSD" ]; then
-    sysctl hw.model hw.machine hw.ncpu > "$OUT/cpu.txt"
+    sysctl hw.model hw.machine hw.ncpu > "$OUT"/cpu.txt
 elif [ $(uname) = "Linux" ]; then
-    cat /proc/cpuinfo > "$OUT/cpu.txt"
+    cat /proc/cpuinfo > "$OUT"/cpu.txt
 else
     die unsupported platform
 fi
 
-siege --version > "$OUT/siege_version.txt"
+siege --version > "$OUT"/siege_version.txt
 
 TESTNAME=siege_test01
 siege --concurrent=30 -t20S -b --log="$OUT/$TESTNAME".csv --no-parser \
