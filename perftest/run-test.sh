@@ -25,7 +25,11 @@ die()
     exit 1
 }
 
-
+UNIPI_IP=10.0.0.2
+UNIPI_PORT=8888
+UNIPI="http://${UNIPI_IP}:${UNIPI_PORT}"
+#TEST_TIME=20S
+TEST_TIME=2S
 OUT=output
 if [ ! -e "$OUT" ]; then
     mkdir "$OUT"
@@ -45,9 +49,9 @@ fi
 siege --version > "$OUT"/siege_version.txt
 
 TESTNAME=siege_test01
-siege --concurrent=30 -t20S -b --log="$OUT/$TESTNAME".csv --no-parser \
-      http://localhost:8888/index.html \
-      > "$OUT/$TESTNAME".stdout
+siege --concurrent=30 -t"$TEST_TIME" -b --log="$OUT/$TESTNAME".csv --no-parser \
+      "$UNIPI"/index.html \
+      2>&1 1>"$OUT/$TESTNAME".stdout
 
 
 

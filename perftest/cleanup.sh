@@ -26,17 +26,16 @@ die()
 }
 
 #> goto pass these, so scripts don't duplicate?
-TAP_NAME=unipi_tap
-SERVICE=unipi_perf_service
+TAP_NAME=unipitap
+SERVICE=unipiperf
 
 info taking down networking
-sudo ip link set dev "$TAP_NAME" down
-sudo ip link del "$TAP_NAME"
-sudo ip link set "$SERVICE" down
-sudo ip link delete "$SERVICE" type bridge
+echo DRYRUN: needs superuser privileges
+# ip link set dev "$TAP_NAME" down
+# ip link del "$TAP_NAME"
+# ip link set "$SERVICE" down
+# ip link delete "$SERVICE" type bridge
 
 info removing all files
-#> goto how to delete non-existent hidden files without error?
-# .. change what wild-card expands to?
-rm -rf * .*
+rm -rf *
 
