@@ -25,7 +25,7 @@ echo "$MEM" > "$OUT"/unipi_mem.txt
 $SOLO5 --net:service="$TAP_NAME" --mem="$MEM" unipi.hvt \
           --ipv4 "$IP" --port "$PORT" \
           --remote "$REMOTE" \
-          2>&1 > "$OUT"/unipi_stdout.txt &
+          >"$OUT"/unipi_stdout.txt 2>&1 &
 
 echo $! > run-unikernel.sh.PID
 

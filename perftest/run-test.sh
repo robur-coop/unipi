@@ -38,9 +38,9 @@ fi
 uname -a > "$OUT"/platform.txt
 date > "$OUT"/time.txt
 
-if [ $(uname) = "FreeBSD" ]; then
+if [ "$(uname)" = "FreeBSD" ]; then
     sysctl hw.model hw.machine hw.ncpu > "$OUT"/cpu.txt
-elif [ $(uname) = "Linux" ]; then
+elif [ "$(uname)" = "Linux" ]; then
     cat /proc/cpuinfo > "$OUT"/cpu.txt
 else
     die unsupported platform
@@ -51,7 +51,7 @@ siege --version > "$OUT"/siege_version.txt
 TESTNAME=siege_test01
 siege --concurrent=30 -t"$TEST_TIME" -b --log="$OUT/$TESTNAME".csv --no-parser \
       "$UNIPI"/index.html \
-      2>&1 1>"$OUT/$TESTNAME".stdout
+      >"$OUT/$TESTNAME".stdout 2>&1 
 
 
 
