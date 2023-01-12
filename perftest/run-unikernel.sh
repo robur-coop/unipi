@@ -2,18 +2,19 @@
 
 set -e
 
+# >>> CONFIGURE PER SYSTEM
 SOLO5=/home/rand/.opam/mirage-tlstunnel/bin/solo5-hvt
+# <<< --------------------
+
 #> Note: keep these in sync with test and init scripts
 TAP_NAME=unipi_tap
 IP=10.0.0.2/24
 PORT=8888
 OUT=output
-#> Note:
-# * daemon is listening on all interfaces, so is on 10.0.0.1 too
-# * repo-name is defined in init.sh
-# * branch need to be passed to unipi
-REMOTE=git://10.0.0.1/unipi_web.git#main
-MEM=512 #MB
+#> Note: port, repo-name, git branch-name need to be in sync with init.sh 
+GIT_DAEMON_PORT=6543
+REMOTE=git://10.0.0.1:"$GIT_DAEMON_PORT"/unipi_web.git#main
+MEM=128 #MB
 
 if [ ! -e "$OUT" ]; then
     mkdir "$OUT"
