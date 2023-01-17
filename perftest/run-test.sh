@@ -28,8 +28,8 @@ die()
 UNIPI_IP=10.0.0.2
 UNIPI_PORT=8888
 UNIPI="http://${UNIPI_IP}:${UNIPI_PORT}"
-#TEST_TIME=20S
-TEST_TIME=2S
+TEST_TIME=20S
+#TEST_TIME=2S
 OUT=output
 if [ ! -e "$OUT" ]; then
     mkdir "$OUT"
