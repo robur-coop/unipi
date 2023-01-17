@@ -67,12 +67,18 @@ cd "$ROOT"
 
 info running git daemon in bg
 git daemon --port="$GIT_DAEMON_PORT" --reuseaddr --enable=receive-pack --base-path="$GIT_DAEMON_ROOT" "$GIT_DAEMON_ROOT" &
-echo $! > init.sh.PID
+
+PID=$!
+echo "$PID" > "$prog_NAME".PID
+
+info sleeping a bit before cloning git repo served by git daemon
+sleep 2
 
 info adding index.html to git repo
 #git init
 #git remote add origin git://127.0.0.1/"$GIT_REPO_NAME"
-git clone git://127.0.0.1:"$GIT_DAEMON_PORT"/"$GIT_REPO_NAME" "$GIT_CLIENT_DIR"
+git clone git://127.0.0.1:"$GIT_DAEMON_PORT"/"$GIT_REPO_NAME" "$GIT_CLIENT_DIR" \
+    && info successfully cloned repo
 cd "$GIT_CLIENT_DIR"
 #goto add a new ('unipi'?) branch if not existing (to not rely on git naming)
 cp "$ROOT"/"$DATA_DIR"/index.html ./
