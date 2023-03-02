@@ -3,14 +3,12 @@ open Lwt.Infix
 let argument_error = 64
 
 module Main
-  (C: Mirage_console.S)
   (_ : sig end)
   (Random: Mirage_random.S)
   (M: Mirage_clock.MCLOCK)
   (P: Mirage_clock.PCLOCK)
   (Time: Mirage_time.S)
-  (Stack: Tcpip.Stack.V4V6)
-  (Management: Tcpip.Stack.V4V6) = struct
+  (Stack: Tcpip.Stack.V4V6) = struct
 
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Stack.TCP)
@@ -54,11 +52,34 @@ module Main
   end
 
   let http_status =
+    let create ~f =
+      let data : (string, int) Hashtbl.t = Hashtbl.create 7 in
+      (fun x ->
+         let key = f x in
+         let cur = match Hashtbl.find_opt data key with
+           | None -> 0
+           | Some x -> x
+         in
+         Hashtbl.replace data key (succ cur)),
+      (fun () ->
+         let data, total =
+           Hashtbl.fold (fun key value (acc, total) ->
+               (Metrics.uint key value :: acc), value + total)
+             data ([], 0)
+         in
+         Metrics.uint "total" total :: data)
+    in
     let f { Httpaf.Response.status ; _ } =
       let code = Httpaf.Status.to_code status in
       Printf.sprintf "%dxx" (code / 100)
     in
-    let src = Mirage_monitoring.counter_metrics ~f "http_response" in
+    let src =
+      let open Metrics in
+      let doc = "Counter metrics" in
+      let incr, get = create ~f in
+      let data thing = incr thing; Data.v (get ()) in
+      Src.v ~doc ~tags:Metrics.Tags.[] ~data "http_response"
+    in
     (fun r -> Metrics.add src (fun x -> x) (fun d -> d r))
 
   let respond_with_empty reqd resp =
@@ -222,22 +243,10 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit argument_error
 
-  module Monitoring = Mirage_monitoring.Make(Time)(P)(Management)
-  module Syslog = Logs_syslog_mirage.Udp(C)(P)(Management)
-
-  let start c git_ctx () () () () stackv4v6 management =
-    let hostname = Key_gen.name ()
-    and syslog = Key_gen.syslog ()
-    and monitor = Key_gen.monitor ()
-    in
-    (match syslog with
-     | None -> Logs.warn (fun m -> m "no syslog specified, dumping on stdout")
-     | Some ip -> Logs.set_reporter (Syslog.create c management ip ~hostname ()));
-    (match monitor with
-     | None -> Logs.warn (fun m -> m "no monitor specified, not outputting statistics")
-     | Some ip -> Monitoring.create ~hostname ip management);
+  let start git_ctx () () () () stackv4v6 =
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
+    Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
