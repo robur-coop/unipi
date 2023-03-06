@@ -25,33 +25,37 @@ die()
     exit 1
 }
 
-UNIPI_IP=10.0.0.2
-UNIPI_PORT=8888
+UNIPI_IP="$1"
+[ -z "${UNIPI_IP}" ] && die "<UNIPI_IP> must be specified"
+UNIPI_PORT="$2"
+[ -z "${UNIPI_PORT}" ] && die "<UNIPI_PORT> must be specified"
 UNIPI="http://${UNIPI_IP}:${UNIPI_PORT}"
-TEST_TIME=20S
-#TEST_TIME=2S
-OUT=output
-if [ ! -e "$OUT" ]; then
-    mkdir "$OUT"
+TEST_DIR="$3"
+[ -z "${TEST_DIR}" ] && die "<TEST_DIR> must be specified"
+if [ ! -e "$TEST_DIR" ]; then
+    mkdir "$TEST_DIR"
 fi
 
-uname -a > "$OUT"/platform.txt
-date > "$OUT"/time.txt
+TEST_TIME=20S
+#TEST_TIME=2S
+
+uname -a > "$TEST_DIR"/platform.txt
+date > "$TEST_DIR"/time.txt
 
 if [ "$(uname)" = "FreeBSD" ]; then
-    sysctl hw.model hw.machine hw.ncpu > "$OUT"/cpu.txt
+    sysctl hw.model hw.machine hw.ncpu > "$TEST_DIR"/cpu.txt
 elif [ "$(uname)" = "Linux" ]; then
-    cat /proc/cpuinfo > "$OUT"/cpu.txt
+    cat /proc/cpuinfo > "$TEST_DIR"/cpu.txt
 else
     die unsupported platform
 fi
 
-siege --version > "$OUT"/siege_version.txt
+siege --version > "$TEST_DIR"/siege_version.txt
 
-TESTNAME=siege_test01
-siege --concurrent=30 -t"$TEST_TIME" -b --log="$OUT/$TESTNAME".csv --no-parser \
+TEST_NAME=siege_test01
+siege --concurrent=30 -t"$TEST_TIME" -b --log="$TEST_DIR/$TEST_NAME".csv --no-parser \
       "$UNIPI"/index.html \
-      >"$OUT/$TESTNAME".stdout 2>&1 
+      >"$TEST_DIR/$TEST_NAME".stdout 2>&1 
 
 
 

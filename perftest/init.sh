@@ -25,33 +25,23 @@ die()
     exit 1
 }
 
+#goto pass this many params as named args instead
+
 ROOT="$PWD"
-DATA_DIR=test-data
-TAP_NAME=unipitap
-SERVICE=unipiperf
-GIT_REPO_NAME=unipi_web.git
-GIT_DAEMON_PORT=6543
-GIT_DAEMON_ROOT=git_daemon
+DATA_DIR="$1"
+[ -z "${DATA_DIR}" ] && die "<DATA_DIR> must be specified"
+WORK_DIR="$2"
+[ -z "${WORK_DIR}" ] && die "<WORK_DIR> must be specified"
+TEST_DIR="$3"
+[ -z "${TEST_DIR}" ] && die "<TEST_DIR> must be specified"
+
+GIT_REPO_NAME="$4"
+[ -z "${GIT_REPO_NAME}" ] && die "<GIT_REPO_NAME> must be specified"
+GIT_DAEMON_PORT="$5"
+[ -z "${GIT_DAEMON_PORT}" ] && die "<GIT_DAEMON_PORT> must be specified"
+GIT_DAEMON_ROOT="$WORK_DIR"/git_daemon
 GIT_DAEMON_DIR="$GIT_DAEMON_ROOT"/"$GIT_REPO_NAME"
-GIT_CLIENT_DIR=git_client
-
-# >>> CONFIGURE PER SYSTEM
-# goto choose special service subnet here, to not collide with existing,
-# .. and keep in sync with other scripts
-# <<< --------------------
-
-#// Networking
-
-#> Note: need superuser privileges
-
-info setting up networking
-echo DRYRUN: already setup networking, as demands super-user rights
-# ip link add "$SERVICE" type bridge
-# ip addr add 10.0.0.1/24 dev "$SERVICE"
-# ip link set dev "$SERVICE" up
-# ip tuntap add "$TAP_NAME" mode tap
-# ip link set dev "$TAP_NAME" up
-# ip link set "$TAP_NAME" master "$SERVICE"
+GIT_CLIENT_DIR="$WORK_DIR"/git_client
 
 #// Git repo with files to serve
 
@@ -59,17 +49,23 @@ info setting up git daemon dir
 mkdir -p "$GIT_DAEMON_DIR"
 cd "$GIT_DAEMON_DIR"
 git init --bare
-git branch -m master main
+#> goto add 'main' as param to share?
+git branch -m main
 cp hooks/post-update.sample hooks/post-update
 chmod a+x hooks/post-update
 touch git-daemon-export-ok
 cd "$ROOT"
 
-info running git daemon in bg
-git daemon --port="$GIT_DAEMON_PORT" --reuseaddr --enable=receive-pack --base-path="$GIT_DAEMON_ROOT" "$GIT_DAEMON_ROOT" &
+info "running git daemon in background"
+git daemon \
+    --port="$GIT_DAEMON_PORT" \
+    --reuseaddr \
+    --enable=receive-pack \
+    --base-path="$GIT_DAEMON_ROOT" \
+    "$GIT_DAEMON_ROOT" &
 
 PID=$!
-echo "$PID" > "$prog_NAME".PID
+echo "$PID" > "$WORK_DIR"/"$prog_NAME".PID
 
 info sleeping a bit before cloning git repo served by git daemon
 sleep 2
@@ -87,9 +83,6 @@ git commit -m "index.html"
 git push
 cd "$ROOT"
 
-#// Foregrounding the daemon, so ssh script can kill it when unipi test is done
-# .. maybe not needed, as ssh doesn't seem to exit unless all processes (bg too) are done?
-#fg 
 
 
 
