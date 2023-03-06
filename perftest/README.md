@@ -19,6 +19,7 @@ Where `TARGET` is one of (defaulting to `hvt`):
 * `spt`
 * `unix`
 
-It will call `sudo` for setting up and tearing down the network bridge for the unikernel if you test a non-`unix` target.
+It will call `sudo` for setting up and tearing down the network bridge for the unikernel if you test a non-`unix` target. You need to compile the requested target beforehand.
+
 
 
