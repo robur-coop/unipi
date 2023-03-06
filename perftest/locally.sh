@@ -26,23 +26,26 @@ die()
     exit 1
 }
 
-usage()
-{
+usage () {
     cat <<EOM 1>&2
 usage: ${prog_NAME} [ OPTIONS ]
-Does everything needed for running a performance-test of `unipi`, using the
-HTTP-server testing tool `siege`. 
-* If you run a non-unix target, sets up a bridge to connect the TAP-device of
-  `unipi` to.
-* Starts a `git-daemon` that serves html to `unipi`
-* Starts `unipi`
-* Runs a `siege` against the HTTP-server of `unipi`
+
+Runs a performance-test of 'unipi', using the HTTP-server testing tool 'siege'.
+The following steps happens:
+
+* (non-unix target) Sets up a bridge to connect the TAP-device of 'unipi' to.
+* Starts a 'git-daemon' that serves html to 'unipi'
+* Starts 'unipi'
+* Runs a 'siege' against the HTTP-server of 'unipi'
+* (non-unix target) Tears down the network
+
+The outputs of the test can be found in the 'test-output' directory.
 
 Options:
     --target=STRING
-        One of `hvt`, `spt` or `unix`. Defaults to `hvt`.
+        One of hvt, spt or unix. Defaults to hvt.
+    --help
 EOM
-    exit 1
 }
 
 TARGET=hvt
@@ -53,6 +56,10 @@ while [ $# -gt 0 ]; do
     case "${OPT}" in
         --target=*)
             TARGET="${OPT##*=}"
+            ;;
+        --help)
+            usage
+            exit 0
             ;;
         *)
             die "Unknown option: '${OPT}'"
