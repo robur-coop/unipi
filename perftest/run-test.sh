@@ -37,7 +37,7 @@ if [ ! -e "$TEST_DIR" ]; then
 fi
 
 TEST_TIME=20S
-#TEST_TIME=2S
+# TEST_TIME=2S
 
 uname -a > "$TEST_DIR"/platform.txt
 date > "$TEST_DIR"/time.txt

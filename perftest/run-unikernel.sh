@@ -29,8 +29,6 @@ die()
 
 SOLO5_DIR="$1"
 [ -z "${SOLO5_DIR}" ] && die "<SOLO5_DIR> must be specified"
-SOLO5="$SOLO5_DIR"/solo5-hvt
-
 SERVICE_IP="$2"
 [ -z "${SERVICE_IP}" ] && die "<SERVICE_IP> must be specified"
 TAP_NAME="$3"
@@ -55,9 +53,13 @@ TEST_DIR="$9"
 if [ ! -e "$TEST_DIR" ]; then
     mkdir "$TEST_DIR"
 fi
-
 info "DEBUG: work-dir = $WORK_DIR"
 info "DEBUG: test-dir = $TEST_DIR"
+
+TARGET="${10}"
+TARGET_EXT="${11}"
+
+SOLO5="$SOLO5_DIR"/solo5-"$TARGET"
 
 REMOTE='git://'"$SERVICE_IP":"$GIT_DAEMON_PORT"/"$GIT_REPO_NAME"'#main'
 info "DEBUG: remote = '$REMOTE'"
@@ -68,11 +70,18 @@ MEM=512 #MB
 echo "$MEM" > "$TEST_DIR"/unipi_mem.txt
 
 touch "$TEST_DIR"/unipi_stdout.txt
-tail -f "$TEST_DIR"/unipi_stdout.txt &
-$SOLO5 --net:service="$TAP_NAME" --mem="$MEM" "$WORK_DIR"/unipi.hvt \
-          --ipv4 "$IP" --port "$PORT" \
-          --remote "$REMOTE" \
-          > "$TEST_DIR"/unipi_stdout.txt 2>&1 &
+tail -f "$TEST_DIR"/unipi_stdout.txt | grep -v '\[application\] requested' &
+if [ "$TARGET" = "unix" ]; then
+    "$WORK_DIR"/unipi \
+               --port "$PORT" \
+               --remote "$REMOTE" \
+               > "$TEST_DIR"/unipi_stdout.txt 2>&1 &
+else 
+    $SOLO5 --net:service="$TAP_NAME" --mem="$MEM" "$WORK_DIR"/unipi"$TARGET_EXT" \
+           --ipv4 "$IP" --port "$PORT" \
+           --remote "$REMOTE" \
+           > "$TEST_DIR"/unipi_stdout.txt 2>&1 &
+fi
 
 PID=$!
 echo "$PID" > "$WORK_DIR"/"$prog_NAME".PID
