@@ -51,10 +51,42 @@ module Main
     let etag () = snd !last
   end
 
+  let http_status =
+    let create ~f =
+      let data : (string, int) Hashtbl.t = Hashtbl.create 7 in
+      (fun x ->
+         let key = f x in
+         let cur = match Hashtbl.find_opt data key with
+           | None -> 0
+           | Some x -> x
+         in
+         Hashtbl.replace data key (succ cur)),
+      (fun () ->
+         let data, total =
+           Hashtbl.fold (fun key value (acc, total) ->
+               (Metrics.uint key value :: acc), value + total)
+             data ([], 0)
+         in
+         Metrics.uint "total" total :: data)
+    in
+    let f { Httpaf.Response.status ; _ } =
+      let code = Httpaf.Status.to_code status in
+      Printf.sprintf "%dxx" (code / 100)
+    in
+    let src =
+      let open Metrics in
+      let doc = "Counter metrics" in
+      let incr, get = create ~f in
+      let data thing = incr thing; Data.v (get ()) in
+      Src.v ~doc ~tags:Metrics.Tags.[] ~data "http_response"
+    in
+    (fun r -> Metrics.add src (fun x -> x) (fun d -> d r))
+
   let respond_with_empty reqd resp =
     let hdr = Httpaf.Headers.add_unless_exists resp.Httpaf.Response.headers
       "connection" "close" in
     let resp = { resp with Httpaf.Response.headers= hdr } in
+    http_status resp;
     Httpaf.Reqd.respond_with_string reqd resp ""
 
   module Dispatch = struct
@@ -98,12 +130,14 @@ module Main
             let headers = Httpaf.Headers.of_list
               [ "content-length", string_of_int (String.length data) ] in
             let resp = Httpaf.Response.create ~headers `OK in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error (`Msg msg) ->
             let headers = Httpaf.Headers.of_list
               [ "content-length", string_of_int (String.length msg) ] in
             let resp = Httpaf.Response.create ~headers `Internal_server_error in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp msg ;
             Lwt.return_unit
         end
@@ -134,6 +168,7 @@ module Main
             ] in
             let headers = Httpaf.Headers.of_list headers in
             let resp = Httpaf.Response.create ~headers `OK in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error _ ->
@@ -141,6 +176,7 @@ module Main
             let headers = Httpaf.Headers.of_list
                 [ "content-length", string_of_int (String.length data) ] in
             let resp = Httpaf.Response.create ~headers `Not_found in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
 
@@ -178,6 +214,11 @@ module Main
     | `Exn exn -> Fmt.pf ppf "exception %s" (Printexc.to_string exn)
 
   let error_handler _dst ?request err _ =
+    let resp_code = match err with
+      | #Httpaf.Status.t as code -> code
+      | `Exn _ -> `Internal_server_error
+    in
+    http_status (Httpaf.Response.create resp_code);
     Logs.err (fun m -> m "error %a while processing request %a"
                  pp_error err
                  Fmt.(option ~none:(any "unknown") Httpaf.Request.pp_hum) request)
