@@ -93,8 +93,9 @@ let packages = [
   package "awa";
   package "awa-mirage";
   package ~min:"0.3.0" "letsencrypt";
-  package ~min:"0.3.0" "paf" ~sublibs:[ "mirage" ];
-  package ~min:"0.3.0" "paf-le";
+  package ~min:"0.5.0" "paf" ~sublibs:[ "mirage" ];
+  package ~min:"0.0.3" "http-mirage-client";
+  package "letsencrypt-mirage";
 ]
 
 let unipi =
@@ -108,7 +109,7 @@ let unipi =
   ] in
   foreign "Unikernel.Main"
     ~packages ~keys
-    (git_client @-> random @-> mclock @-> pclock @-> time @-> stackv4v6 @-> job)
+    (git_client @-> pclock @-> time @-> stackv4v6 @-> alpn_client @-> job)
 
 let enable_monitoring =
   let doc = Key.Arg.info
@@ -179,8 +180,15 @@ let optional_syslog console pclock stack =
     (syslog $ console $ pclock $ stack)
     noop
 
+let dns = generic_dns_client stack
+
+let alpn_client =
+  let dns =
+    mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns)
+  in
+  paf_client (tcpv4v6_of_stackv4v6 stack) dns
+
 let git_client =
-  let dns = generic_dns_client stack in
   let git = mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
   let tcp = tcpv4v6_of_stackv4v6 stack in
   merge_git_clients (git_tcp tcp git)
@@ -191,5 +199,5 @@ let () =
   register "unipi" [
     optional_syslog default_console default_posix_clock management_stack ;
     optional_monitoring default_time default_posix_clock management_stack ;
-    unipi $ git_client $ default_random $ default_monotonic_clock $ default_posix_clock $ default_time $ stack
+    unipi $ git_client $ default_posix_clock $ default_time $ stack $ alpn_client
   ]
