@@ -4,16 +4,14 @@ let argument_error = 64
 
 module Main
   (_ : sig end)
-  (Random: Mirage_random.S)
-  (M: Mirage_clock.MCLOCK)
   (P: Mirage_clock.PCLOCK)
   (Time: Mirage_time.S)
-  (Stack: Tcpip.Stack.V4V6) = struct
+  (Stack: Tcpip.Stack.V4V6)
+  (HTTP: Http_mirage_client.S) = struct
 
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Stack.TCP)
   module LE = LE.Make(Time)(Stack)
-  module DNS = Dns_client_mirage.Make(Random)(Time)(M)(P)(Stack)
   module Store = Git_kv.Make(P)
 
   module Last_modified = struct
@@ -243,7 +241,7 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit argument_error
 
-  let start git_ctx () () () () stackv4v6 =
+  let start git_ctx () () stackv4v6 http_client =
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
@@ -261,10 +259,6 @@ module Main
            Logs.info (fun m ->
                m "listening on 80/HTTP (let's encrypt provisioning)");
            let th1 =
-             let gethostbyname dns domain_name =
-               DNS.gethostbyname dns domain_name >>? fun ipv4 ->
-               Lwt.return_ok (Ipaddr.V4 ipv4)
-             in
              LE.provision_certificate
                ~production:(Key_gen.production ())
                { LE.certificate_seed = Key_gen.cert_seed ()
@@ -275,10 +269,7 @@ module Main
                ; LE.account_key_type = key_type (Key_gen.account_key_type ())
                ; LE.account_key_bits = Some (Key_gen.account_bits ())
                ; LE.hostname = Key_gen.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
-               (LE.ctx
-                  ~gethostbyname
-                  ~authenticator:(Result.get_ok (Nss.authenticator ()))
-                  (DNS.create stackv4v6) stackv4v6)
+               http_client
                >>? fun certificates ->
              Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
            Lwt.both th0 th1 >>= function
