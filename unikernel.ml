@@ -256,7 +256,7 @@ module Main
 
   let start git_ctx () () stackv4v6 http_client =
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
-    Last_modified.retrieve_last_commit store >>= fun () ->
+    Last_modified.retrieve_last_commit store >>= fun _ -> (*goto handle error*)
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
