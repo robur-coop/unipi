@@ -143,11 +143,15 @@ module Main
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error (`Msg msg) ->
+            Logs.err (fun m -> m "%s" msg);
+            (*> Note: Client shouldn't get internal error strings*)
+            let user_msg =
+              "Internal server error: See server log for more info" in
             let headers = Httpaf.Headers.of_list
-              [ "content-length", string_of_int (String.length msg) ] in
+              [ "content-length", string_of_int (String.length user_msg) ] in
             let resp = Httpaf.Response.create ~headers `Internal_server_error in
             http_status resp;
-            Httpaf.Reqd.respond_with_string reqd resp msg ;
+            Httpaf.Reqd.respond_with_string reqd resp user_msg;
             Lwt.return_unit
         end
       else
