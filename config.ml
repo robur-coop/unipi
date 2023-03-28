@@ -48,7 +48,7 @@ let tls_authenticator =
   Key.(create "tls-authenticator" Arg.(opt (some string) None doc))
 
 let hostname =
-  let doc = Key.Arg.info ~doc:"Host name." ["hostname"] in
+  let doc = Key.Arg.info ~doc:"Host name (used for let's encrypt and redirects)." ["hostname"] in
   Key.(create "hostname" Arg.(opt (some string) None doc))
 
 let production =
@@ -86,15 +86,16 @@ let email =
 let packages = [
   package ~min:"3.7.0" "git-paf";
   package ~min:"3.7.0" "git";
-  package "git-kv";
+  package ~min:"0.0.2" "git-kv";
   package "tls-mirage";
   package ~min:"1.3.0" "magic-mime";
   package "logs";
   package "awa";
   package "awa-mirage";
   package ~min:"0.3.0" "letsencrypt";
-  package ~min:"0.3.0" "paf" ~sublibs:[ "mirage" ];
-  package ~min:"0.3.0" "paf-le";
+  package ~min:"0.5.0" "paf" ~sublibs:[ "mirage" ];
+  package ~min:"0.0.3" "http-mirage-client";
+  package "letsencrypt-mirage";
 ]
 
 let unipi =
@@ -108,13 +109,87 @@ let unipi =
   ] in
   foreign "Unikernel.Main"
     ~packages ~keys
-    (git_client @-> random @-> mclock @-> pclock @-> time @-> stackv4v6 @-> job)
+    (git_client @-> pclock @-> time @-> stackv4v6 @-> alpn_client @-> job)
+
+let enable_monitoring =
+  let doc = Key.Arg.info
+      ~doc:"Enable monitoring (only available for solo5 targets)"
+      [ "enable-monitoring" ]
+  in
+  Key.(create "enable-monitoring" Arg.(flag ~stage:`Configure doc))
 
 let stack = generic_stackv4v6 default_network
 
+let management_stack =
+  if_impl
+    (Key.value enable_monitoring)
+    (generic_stackv4v6 ~group:"management" (netif ~group:"management" "management"))
+    stack
+
+let name =
+  let doc = Key.Arg.info ~doc:"Name of the unikernel" [ "name" ] in
+  Key.(v (create "name" Arg.(opt string "robur.coop" doc)))
+
+let monitoring =
+  let monitor =
+    let doc = Key.Arg.info ~doc:"monitor host IP" ["monitor"] in
+    Key.(v (create "monitor" Arg.(opt (some ip_address) None doc)))
+  in
+  let connect _ modname = function
+    | [ _ ; _ ; stack ] ->
+      Fmt.str "Lwt.return (match %a with\
+               | None -> Logs.warn (fun m -> m \"no monitor specified, not outputting statistics\")\
+               | Some ip -> %s.create ip ~hostname:%a %s)"
+        Key.serialize_call monitor modname
+        Key.serialize_call name stack
+    | _ -> assert false
+  in
+  impl
+    ~packages:[ package "mirage-monitoring" ]
+    ~keys:[ name ; monitor ]
+    ~connect "Mirage_monitoring.Make"
+    (time @-> pclock @-> stackv4v6 @-> job)
+
+let syslog =
+  let syslog =
+    let doc = Key.Arg.info ~doc:"syslog host IP" ["syslog"] in
+    Key.(v (create "syslog" Arg.(opt (some ip_address) None doc)))
+  in
+  let connect _ modname = function
+    | [ console ; _ ; stack ] ->
+      Fmt.str "Lwt.return (match %a with\
+               | None -> Logs.warn (fun m -> m \"no syslog specified, dumping on stdout\")\
+               | Some ip -> Logs.set_reporter (%s.create %s %s ip ~hostname:%a ()))"
+        Key.serialize_call syslog modname console stack
+        Key.serialize_call name
+    | _ -> assert false
+  in
+  impl
+    ~packages:[ package ~sublibs:["mirage"] ~min:"0.3.0" "logs-syslog" ]
+    ~keys:[ name ; syslog ]
+    ~connect "Logs_syslog_mirage.Udp"
+    (console @-> pclock @-> stackv4v6 @-> job)
+
+let optional_monitoring time pclock stack =
+  if_impl (Key.value enable_monitoring)
+    (monitoring $ time $ pclock $ stack)
+    noop
+
+let optional_syslog console pclock stack =
+  if_impl (Key.value enable_monitoring)
+    (syslog $ console $ pclock $ stack)
+    noop
+
+let dns = generic_dns_client stack
+
+let alpn_client =
+  let dns =
+    mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns)
+  in
+  paf_client (tcpv4v6_of_stackv4v6 stack) dns
+
 let git_client =
-  let dns = generic_dns_client stack in
-  let git = git_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
+  let git = mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
   let tcp = tcpv4v6_of_stackv4v6 stack in
   merge_git_clients (git_tcp tcp git)
     (merge_git_clients (git_ssh ~key:ssh_key ~authenticator:ssh_authenticator tcp git)
@@ -122,11 +197,7 @@ let git_client =
 
 let () =
   register "unipi" [
-    unipi
-    $ git_client
-    $ default_random
-    $ default_monotonic_clock
-    $ default_posix_clock
-    $ default_time
-    $ stack
+    optional_syslog default_console default_posix_clock management_stack ;
+    optional_monitoring default_time default_posix_clock management_stack ;
+    unipi $ git_client $ default_posix_clock $ default_time $ stack $ alpn_client
   ]

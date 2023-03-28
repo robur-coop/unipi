@@ -4,16 +4,14 @@ let argument_error = 64
 
 module Main
   (_ : sig end)
-  (Random: Mirage_random.S)
-  (M: Mirage_clock.MCLOCK)
   (P: Mirage_clock.PCLOCK)
   (Time: Mirage_time.S)
-  (Stack: Tcpip.Stack.V4V6) = struct
+  (Stack: Tcpip.Stack.V4V6)
+  (HTTP: Http_mirage_client.S) = struct
 
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Stack.TCP)
   module LE = LE.Make(Time)(Stack)
-  module DNS = Dns_client_mirage.Make(Random)(Time)(M)(P)(Stack)
   module Store = Git_kv.Make(P)
 
   module Last_modified = struct
@@ -43,8 +41,11 @@ module Main
         Lwt_result.fail @@ `Msg msg
       | Ok last_hash ->
         Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
-        let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Pclock.now_d_ps ()) r in
-        let last_date = ptime_to_http_date (Ptime.v v) in
+        let v = Result.fold r
+            ~ok:Fun.id
+            ~error:(fun _ -> Pclock.now_d_ps () |> Ptime.v)
+        in
+        let last_date = ptime_to_http_date v in
         last := (last_date, last_hash);
         Ok ()
 
@@ -59,10 +60,42 @@ module Main
     let etag () = snd !last
   end
 
+  let http_status =
+    let create ~f =
+      let data : (string, int) Hashtbl.t = Hashtbl.create 7 in
+      (fun x ->
+         let key = f x in
+         let cur = match Hashtbl.find_opt data key with
+           | None -> 0
+           | Some x -> x
+         in
+         Hashtbl.replace data key (succ cur)),
+      (fun () ->
+         let data, total =
+           Hashtbl.fold (fun key value (acc, total) ->
+               (Metrics.uint key value :: acc), value + total)
+             data ([], 0)
+         in
+         Metrics.uint "total" total :: data)
+    in
+    let f { Httpaf.Response.status ; _ } =
+      let code = Httpaf.Status.to_code status in
+      Printf.sprintf "%dxx" (code / 100)
+    in
+    let src =
+      let open Metrics in
+      let doc = "Counter metrics" in
+      let incr, get = create ~f in
+      let data thing = incr thing; Data.v (get ()) in
+      Src.v ~doc ~tags:Metrics.Tags.[] ~data "http_response"
+    in
+    (fun r -> Metrics.add src (fun x -> x) (fun d -> d r))
+
   let respond_with_empty reqd resp =
     let hdr = Httpaf.Headers.add_unless_exists resp.Httpaf.Response.headers
       "connection" "close" in
     let resp = { resp with Httpaf.Response.headers= hdr } in
+    http_status resp;
     Httpaf.Reqd.respond_with_string reqd resp ""
 
   module Dispatch = struct
@@ -106,12 +139,14 @@ module Main
             let headers = Httpaf.Headers.of_list
               [ "content-length", string_of_int (String.length data) ] in
             let resp = Httpaf.Response.create ~headers `OK in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error (`Msg msg) ->
             let headers = Httpaf.Headers.of_list
               [ "content-length", string_of_int (String.length msg) ] in
             let resp = Httpaf.Response.create ~headers `Internal_server_error in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp msg ;
             Lwt.return_unit
         end
@@ -142,6 +177,7 @@ module Main
             ] in
             let headers = Httpaf.Headers.of_list headers in
             let resp = Httpaf.Response.create ~headers `OK in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error _ ->
@@ -149,6 +185,7 @@ module Main
             let headers = Httpaf.Headers.of_list
                 [ "content-length", string_of_int (String.length data) ] in
             let resp = Httpaf.Response.create ~headers `Not_found in
+            http_status resp;
             Httpaf.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
 
@@ -186,6 +223,11 @@ module Main
     | `Exn exn -> Fmt.pf ppf "exception %s" (Printexc.to_string exn)
 
   let error_handler _dst ?request err _ =
+    let resp_code = match err with
+      | #Httpaf.Status.t as code -> code
+      | `Exn _ -> `Internal_server_error
+    in
+    http_status (Httpaf.Response.create resp_code);
     Logs.err (fun m -> m "error %a while processing request %a"
                  pp_error err
                  Fmt.(option ~none:(any "unknown") Httpaf.Request.pp_hum) request)
@@ -212,7 +254,7 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit argument_error
 
-  let start git_ctx () () () () stackv4v6 =
+  let start git_ctx () () stackv4v6 http_client =
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
@@ -230,10 +272,6 @@ module Main
            Logs.info (fun m ->
                m "listening on 80/HTTP (let's encrypt provisioning)");
            let th1 =
-             let gethostbyname dns domain_name =
-               DNS.gethostbyname dns domain_name >>? fun ipv4 ->
-               Lwt.return_ok (Ipaddr.V4 ipv4)
-             in
              LE.provision_certificate
                ~production:(Key_gen.production ())
                { LE.certificate_seed = Key_gen.cert_seed ()
@@ -244,10 +282,7 @@ module Main
                ; LE.account_key_type = key_type (Key_gen.account_key_type ())
                ; LE.account_key_bits = Some (Key_gen.account_bits ())
                ; LE.hostname = Key_gen.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
-               (LE.ctx
-                  ~gethostbyname
-                  ~authenticator:(Result.get_ok (Nss.authenticator ()))
-                  (DNS.create stackv4v6) stackv4v6)
+               http_client
                >>? fun certificates ->
              Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
            Lwt.both th0 th1 >>= function
