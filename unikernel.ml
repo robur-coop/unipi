@@ -254,9 +254,13 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit argument_error
 
+  let failwith_msg t = t >>= function
+  | Ok v -> Lwt.return v
+  | Error (`Msg msg) -> Lwt.fail_with msg
+
   let start git_ctx () () stackv4v6 http_client =
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
-    Last_modified.retrieve_last_commit store >>= fun _ -> (*goto handle error*)
+    Last_modified.retrieve_last_commit store |> failwith_msg >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     begin
       Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
