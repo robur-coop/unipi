@@ -37,13 +37,16 @@ module Main
       Store.digest store Mirage_kv.Key.empty >>= function
       | Error (`Not_found _) ->
         let msg = Fmt.str "No commit found - are you on the correct branch?" in
-        failwith msg
-      | Error err -> failwith @@ Fmt.str "%a" Store.pp_error err
+        Lwt_result.fail @@ `Msg msg
+      | Error err ->
+        let msg = Fmt.str "%a" Store.pp_error err in
+        Lwt_result.fail @@ `Msg msg
       | Ok last_hash ->
         Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
         let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Pclock.now_d_ps ()) r in
         let last_date = ptime_to_http_date (Ptime.v v) in
-        last := (last_date, last_hash)
+        last := (last_date, last_hash);
+        Ok ()
 
     let not_modified request =
       match Httpaf.Headers.get request.Httpaf.Request.headers "if-modified-since" with
@@ -194,8 +197,10 @@ module Main
       Git_kv.pull store >>= function
       | Ok [] -> Lwt.return_ok "pulled, no changes"
       | Ok _ ->
-        Last_modified.retrieve_last_commit store >>= fun () ->
-        Lwt.return_ok ("pulled " ^ Last_modified.etag ())
+        Last_modified.retrieve_last_commit store
+        |> Lwt_result.map (fun () ->
+          "pulled " ^ Last_modified.etag ()
+        )
       | Error _ as e -> Lwt.return e
     in
     Dispatch.dispatch store hookf (Key_gen.hook ())
