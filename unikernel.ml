@@ -258,67 +258,71 @@ module Main
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun _ -> (*goto handle error*)
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
-    Lwt.map
-      (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
-      (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
-       if Key_gen.tls () then begin
-         let rec provision () =
-           Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
-           let service =
-             Paf.http_service ~error_handler (fun _ -> LE.request_handler)
-           in
-           let stop = Lwt_switch.create () in
-           let `Initialized th0 = Paf.serve ~stop service t in
-           Logs.info (fun m ->
-               m "listening on 80/HTTP (let's encrypt provisioning)");
-           let th1 =
-             LE.provision_certificate
-               ~production:(Key_gen.production ())
-               { LE.certificate_seed = Key_gen.cert_seed ()
-               ; LE.certificate_key_type = key_type (Key_gen.cert_key_type ())
-               ; LE.certificate_key_bits = Some (Key_gen.cert_bits ())
-               ; LE.email = Option.bind (Key_gen.email ()) (fun e -> Emile.of_string e |> Result.to_option)
-               ; LE.account_seed = Key_gen.account_seed ()
-               ; LE.account_key_type = key_type (Key_gen.account_key_type ())
-               ; LE.account_key_bits = Some (Key_gen.account_bits ())
-               ; LE.hostname = Key_gen.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
-               http_client
-               >>? fun certificates ->
-             Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
-           Lwt.both th0 th1 >>= function
-           | ((), (Error _ as err)) -> Lwt.return err
-           | ((), Ok certificates) ->
-             Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
-             let tls = Tls.Config.server ~certificates () in
-             Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
-             let service =
-               Paf.https_service ~tls ~error_handler (request_handler store)
-             in
-             let stop = Lwt_switch.create () in
-             let `Initialized th0 = Paf.serve ~stop service t in
-             Logs.info (fun m ->
-                 m "listening on %d/HTTPS" (Key_gen.port ()));
-             Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
-             let service =
-               let to_port = (Key_gen.https_port ()) in
-               Paf.http_service ~error_handler (Dispatch.redirect to_port)
-             in
-             let `Initialized th1 = Paf.serve ~stop service t in
-             Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
-                           (Key_gen.port ()) (Key_gen.https_port ()));
-             Lwt.join [ th0 ; th1 ;
-                        (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
-               >>= fun () ->
-             provision ()
-         in
-         provision ()
-       end else begin
-         Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
-         let service =
-           Paf.http_service ~error_handler (request_handler store)
-         in
-         let `Initialized th = Paf.serve service t in
-         Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
-         (th >|= fun v -> Ok v)
-       end)
+    begin
+      Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
+      if Key_gen.tls () then begin
+        let rec provision () =
+          Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
+          let service =
+            Paf.http_service ~error_handler (fun _ -> LE.request_handler)
+          in
+          let stop = Lwt_switch.create () in
+          let `Initialized th0 = Paf.serve ~stop service t in
+          Logs.info (fun m ->
+            m "listening on 80/HTTP (let's encrypt provisioning)");
+          let th1 =
+            LE.provision_certificate
+              ~production:(Key_gen.production ())
+              { LE.certificate_seed = Key_gen.cert_seed ()
+              ; LE.certificate_key_type = key_type (Key_gen.cert_key_type ())
+              ; LE.certificate_key_bits = Some (Key_gen.cert_bits ())
+              ; LE.email = Option.bind (Key_gen.email ()) (fun e -> Emile.of_string e |> Result.to_option)
+              ; LE.account_seed = Key_gen.account_seed ()
+              ; LE.account_key_type = key_type (Key_gen.account_key_type ())
+              ; LE.account_key_bits = Some (Key_gen.account_bits ())
+              ; LE.hostname = Key_gen.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
+              http_client
+            >>? fun certificates ->
+            Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
+          Lwt.both th0 th1 >>= function
+          | ((), (Error _ as err)) -> Lwt.return err
+          | ((), Ok certificates) ->
+            Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
+            let tls = Tls.Config.server ~certificates () in
+            Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
+            let service =
+              Paf.https_service ~tls ~error_handler (request_handler store)
+            in
+            let stop = Lwt_switch.create () in
+            let `Initialized th0 = Paf.serve ~stop service t in
+            Logs.info (fun m ->
+              m "listening on %d/HTTPS" (Key_gen.port ()));
+            Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+            let service =
+              let to_port = (Key_gen.https_port ()) in
+              Paf.http_service ~error_handler (Dispatch.redirect to_port)
+            in
+            let `Initialized th1 = Paf.serve ~stop service t in
+            Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
+                (Key_gen.port ()) (Key_gen.https_port ()));
+            Lwt.join [ th0 ; th1 ;
+              (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
+            >>= fun () ->
+            provision ()
+        in
+        provision ()
+      end else begin
+        Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+        let service =
+          Paf.http_service ~error_handler (request_handler store)
+        in
+        let `Initialized th = Paf.serve service t in
+        Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
+        (th >|= fun v -> Ok v)
+      end
+    end
+    >>= function
+    | Ok () -> Lwt.return_unit
+    | Error (`Msg msg) -> Lwt.fail_with msg
+
 end
