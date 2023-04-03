@@ -36,6 +36,10 @@ let ssh_key =
   let doc = Key.Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
   Key.(create "ssh-key" Arg.(opt (some string) None doc))
 
+let ssh_password =
+  let doc = Key.Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
+  Key.(create "ssh_password" Arg.(opt (some string) None doc))
+
 let ssh_authenticator =
   let doc = Key.Arg.info ~doc:"SSH host key authenticator." ["ssh-authenticator"] in
   Key.(create "ssh_authenticator" Arg.(opt (some string) None doc))
@@ -192,7 +196,7 @@ let git_client =
   let git = mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
   let tcp = tcpv4v6_of_stackv4v6 stack in
   merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh ~key:ssh_key ~authenticator:ssh_authenticator tcp git)
+    (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator:ssh_authenticator tcp git)
        (git_http ~authenticator:tls_authenticator tcp git))
 
 let () =
