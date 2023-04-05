@@ -38,7 +38,7 @@ let ssh_key =
 
 let ssh_password =
   let doc = Key.Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
-  Key.(create "ssh_password" Arg.(opt (some string) None doc))
+  Key.(create "ssh-password" Arg.(opt (some string) None doc))
 
 let ssh_authenticator =
   let doc = Key.Arg.info ~doc:"SSH host key authenticator." ["ssh-authenticator"] in
