@@ -197,7 +197,14 @@ module Main
       Logs.err (fun m -> m "hook url contains /, which is not allowed");
       exit argument_error
     end else
-      let hookf () = Remote.pull store upstream in
+      let hookf () =
+        Lwt.catch
+          (fun () -> Remote.pull store upstream)
+          (fun e ->
+             let msg = Printexc.to_string e in
+             Logs.err (fun m -> m "received exception while executing hook %s" msg);
+             Lwt.return (Error (`Msg msg)))
+      in
       Dispatch.dispatch store hookf hook_url
 
   let key_type kt =
