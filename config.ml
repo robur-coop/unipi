@@ -102,6 +102,10 @@ let packages = [
   package "letsencrypt-mirage";
 ]
 
+
+let certs_key = Key.(value @@ kv_ro ~group:"certs" ())
+let certs = generic_kv_ro ~key:certs_key "tls"
+
 let unipi =
   let keys = [
     Key.v default_mime_type; Key.v mime_type; Key.v hook; Key.v remote;
@@ -113,7 +117,7 @@ let unipi =
   ] in
   foreign "Unikernel.Main"
     ~packages ~keys
-    (git_client @-> pclock @-> time @-> stackv4v6 @-> alpn_client @-> job)
+    (git_client @-> pclock @-> time @-> stackv4v6 @-> alpn_client @-> kv_ro @-> job)
 
 let enable_monitoring =
   let doc = Key.Arg.info
@@ -211,5 +215,5 @@ let () =
   register "unipi" [
     optional_syslog default_posix_clock management_stack ;
     optional_monitoring default_time default_posix_clock management_stack ;
-    unipi $ git_client $ default_posix_clock $ default_time $ stack $ alpn_client
+    unipi $ git_client $ default_posix_clock $ default_time $ stack $ alpn_client $ certs
   ]

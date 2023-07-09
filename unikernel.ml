@@ -7,12 +7,27 @@ module Main
   (P: Mirage_clock.PCLOCK)
   (Time: Mirage_time.S)
   (Stack: Tcpip.Stack.V4V6)
-  (HTTP: Http_mirage_client.S) = struct
+  (HTTP: Http_mirage_client.S)
+  (KEYS: Mirage_kv.RO) = struct
 
   module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Stack.TCP)
   module LE = LE.Make(Time)(Stack)
   module Store = Git_kv.Make(P)
+
+  module X509KV = Tls_mirage.X509(KEYS)(Pclock)
+
+  let tls_from_kv kv =
+    Lwt.catch
+      (fun () ->
+         Logs.info (fun m -> m "now reading certificates from KV");
+         X509KV.certificate kv `Default >|= fun certs ->
+         Logs.info (fun m -> m "read certificates from KV");
+         Ok certs)
+      (fun e ->
+         Logs.info (fun m -> m "failed to read certificates from KV %s"
+                       (Printexc.to_string e));
+         Lwt.return (Error ()))
 
   module Last_modified = struct
     let ptime_to_http_date ptime =
@@ -241,7 +256,7 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit argument_error
 
-  let start git_ctx () () stackv4v6 http_client =
+  let start git_ctx () () stackv4v6 http_client keys =
     Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
@@ -249,33 +264,28 @@ module Main
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
        if Key_gen.tls () then begin
-         let rec provision () =
-           Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
-           let service =
-             Paf.http_service ~error_handler (fun _ -> LE.request_handler)
+         let now = Ptime.v (P.now_d_ps ()) in
+         begin
+           let open Lwt.Infix in
+           (* let's consider only certificates that are valid for at least one more day! *)
+           let than = match Ptime.add_span now (Ptime.Span.v (1, 0L)) with
+               None -> now | Some n -> n
            in
-           let stop = Lwt_switch.create () in
-           let `Initialized th0 = Paf.serve ~stop service t in
-           Logs.info (fun m ->
-               m "listening on 80/HTTP (let's encrypt provisioning)");
-           let th1 =
-             LE.provision_certificate
-               ~production:(Key_gen.production ())
-               { LE.certificate_seed = Key_gen.cert_seed ()
-               ; LE.certificate_key_type = key_type (Key_gen.cert_key_type ())
-               ; LE.certificate_key_bits = Some (Key_gen.cert_bits ())
-               ; LE.email = Option.bind (Key_gen.email ()) (fun e -> Emile.of_string e |> Result.to_option)
-               ; LE.account_seed = Key_gen.account_seed ()
-               ; LE.account_key_type = key_type (Key_gen.account_key_type ())
-               ; LE.account_key_bits = Some (Key_gen.account_bits ())
-               ; LE.hostname = Key_gen.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
-               http_client
-               >>? fun certificates ->
-             Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
-           Lwt.both th0 th1 >>= function
-           | ((), (Error _ as err)) -> Lwt.return err
-           | ((), Ok certificates) ->
-             Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
+           tls_from_kv keys >|= function
+           | Ok (server :: chain, priv) ->
+             let until = snd (X509.Certificate.validity server) in
+             let good = Ptime.is_later ~than until in
+             Logs.info (fun m -> m "certificate valid until %a, good %B"
+                           (Ptime.pp_rfc3339 ()) until good);
+             if good then
+               Ok (`Single (server :: chain, priv))
+             else
+               Error (`Msg "certificate not good")
+           | Ok ([], _) ->
+             Error (`Msg "empty certificate chain")
+           | Error () ->
+             Error (`Msg "error while getting certificates")
+         end >>? fun certificates ->
              let tls = Tls.Config.server ~certificates () in
              Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
              let service =
@@ -293,12 +303,8 @@ module Main
              let `Initialized th1 = Paf.serve ~stop service t in
              Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
                            (Key_gen.port ()) (Key_gen.https_port ()));
-             Lwt.join [ th0 ; th1 ;
-                        (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
-               >>= fun () ->
-             provision ()
-         in
-         provision ()
+             Lwt.join [ th0 ; th1 ] >|= fun () ->
+             Ok ()
        end else begin
          Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
          let service =
@@ -306,6 +312,6 @@ module Main
          in
          let `Initialized th = Paf.serve service t in
          Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
-         (th >|= fun v -> Ok v)
+         (th >|= fun () -> Ok ())
        end)
 end
