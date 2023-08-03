@@ -256,8 +256,22 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit argument_error
 
+  let try_pull git_ctx =
+    let remote = Key_gen.remote () in
+    let rec go attempt =
+      Lwt.catch
+        (fun () -> Git_kv.connect git_ctx remote)
+        (function
+          | Invalid_argument _ when attempt > 0 ->
+            Logs.info (fun m -> m "failed to fetch repository, trying again in a second");
+            Time.sleep_ns (Duration.of_sec 1) >>= fun () ->
+            go (attempt - 1)
+          | e -> raise e)
+    in
+    go 5
+
   let start git_ctx () () stackv4v6 http_client keys =
-    Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
+    try_pull git_ctx >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
