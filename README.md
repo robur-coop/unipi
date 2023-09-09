@@ -5,7 +5,7 @@ HTTP and HTTPS. It embeds (optional) let's encrypt provisioning.
 
 A webhook is provided to update the internal state of the git repository. An
 example deployment is [robur.coop](https://robur.coop), which serves the
-[robur website](https://git.robur.io/robur/homepage-data) (using the
+[robur website](https://git.robur.coop/robur/homepage-data) (using the
 pages branch).
 
 Some HTTP headers are added: "content-type", which value is looked up of the
@@ -55,7 +55,7 @@ To install this unikernel from source, you need to have
 The following steps will clone this git repository and compile the unikernel:
 
 ```bash
-$ git clone https://github.com/roburio/unipi.git
+$ git clone https://github.com/robur-coop/unipi.git
 $ cd unipi
 $ mirage configure -t <your-favourite-target> #i.e. hvt, spt, xen
 $ make depend
