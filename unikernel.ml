@@ -21,7 +21,7 @@ module K = struct
   let remote =
     let doc = Arg.info
         ~doc:"Remote repository url, use suffix #foo to specify a branch 'foo': \
-              https://github.com/hannesm/unipi.git#gh-pages"
+              https://github.com/robur-coop/unipi.git#gh-pages"
         ["remote"]
     in
     Arg.(required & opt (some string) None doc) |> Mirage_runtime.key
