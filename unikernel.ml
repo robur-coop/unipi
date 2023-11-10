@@ -1,6 +1,110 @@
 open Lwt.Infix
 
-let argument_error = 64
+module K = struct
+  open Cmdliner
+
+  let ip =
+    Arg.conv ~docv:"IP" (Ipaddr.of_string, Ipaddr.pp)
+
+  let default_mime_type =
+    let doc = Arg.info ~doc:"Default mime-type to serve." ["default-mime-type"] in
+    Arg.(value & opt string "application/octet-stream" doc) |> Mirage_runtime.key
+
+  let mime_type =
+    let doc = Arg.info ~doc:"Overwrite mime-type for a path." ["mime-type"] in
+    Arg.(value & opt_all (pair ~sep:':' string string) [] doc) |> Mirage_runtime.key
+
+  let hook =
+    let doc = Arg.info ~doc:"Webhook for pulling the repository." ["hook"] in
+    Arg.(value & opt string "/hook" doc) |> Mirage_runtime.key
+
+  let remote =
+    let doc = Arg.info
+        ~doc:"Remote repository url, use suffix #foo to specify a branch 'foo': \
+              https://github.com/hannesm/unipi.git#gh-pages"
+        ["remote"]
+    in
+    Arg.(required & opt (some string) None doc) |> Mirage_runtime.key
+
+  let port =
+    let doc = Arg.info ~doc:"HTTP listen port." ["port"] in
+    Arg.(value & opt int 80 doc) |> Mirage_runtime.key
+
+  let https_port =
+    let doc = Arg.info ~doc:"HTTPS listen port." ["https-port"] in
+    Arg.(value & opt int 443 doc) |> Mirage_runtime.key
+
+  let tls =
+    let doc = Arg.info ~doc:"Enable TLS." ["tls"] in
+    Arg.(value & flag doc) |> Mirage_runtime.key
+
+  let ssh_key =
+    let doc = Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
+    Arg.(value & opt (some string) None doc)
+
+  let ssh_password =
+    let doc = Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
+    Arg.(value & opt (some string) None doc)
+
+  let ssh_authenticator =
+    let doc = Arg.info ~doc:"SSH authenticator." ["authenticator"] in
+    Arg.(value & opt (some string) None doc)
+
+  let tls_authenticator =
+    (* this will not look the same in the help printout *)
+    let doc = "TLS host authenticator. See git_http in lib/mirage/mirage.mli for a description of the format."
+    in
+    let doc = Arg.info ~doc ["tls-authenticator"] in
+    Arg.(value & opt (some string) None doc)
+
+  let hostname =
+    let doc = Arg.info ~doc:"Host name (used for let's encrypt and redirects)." ["hostname"] in
+    Arg.(value & opt (some string) None doc) |> Mirage_runtime.key
+
+  let production =
+    let doc = Arg.info ~doc:"Let's encrypt production environment." ["production"] in
+    Arg.(value & flag doc) |> Mirage_runtime.key
+
+  let cert_seed =
+    let doc = Arg.info ~doc:"Let's encrypt certificate seed." ["cert-seed"] in
+    Arg.(value & opt (some string) None doc) |> Mirage_runtime.key
+
+  let cert_key_type =
+    let doc = Arg.info ~doc:"certificate key type" ["cert-key-type"] in
+    Arg.(value & opt (enum X509.Key_type.strings) `RSA doc) |> Mirage_runtime.key
+
+  let cert_bits =
+    let doc = Arg.info ~doc:"certificate public key bits" ["cert-bits"] in
+    Arg.(value & opt int 4096 doc) |> Mirage_runtime.key
+
+  let account_seed =
+    let doc = Arg.info ~doc:"Let's encrypt account seed." ["account-seed"] in
+    Arg.(value & opt (some string) None doc) |> Mirage_runtime.key
+
+  let account_key_type =
+    let doc = Arg.info ~doc:"account key type" ["account-key-type"] in
+    Arg.(value & opt (enum X509.Key_type.strings) `RSA doc) |> Mirage_runtime.key
+
+  let account_bits =
+    let doc = Arg.info ~doc:"account public key bits" ["account-bits"] in
+    Arg.(value & opt int 4096 doc) |> Mirage_runtime.key
+
+  let email =
+    let doc = Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
+    Arg.(value & opt (some string) None doc) |> Mirage_runtime.key
+
+  let name =
+    let doc = Arg.info ~doc:"Name of the unikernel" [ "name" ] in
+    Arg.(value & opt string "a.ns.robur.coop" doc)
+
+  let monitor =
+    let doc = Arg.info ~doc:"monitor host IP" [ "monitor" ] in
+    Arg.(value & opt (some ip) None doc)
+
+  let syslog =
+    let doc = Arg.info ~doc:"syslog host IP" [ "syslog" ] in
+    Arg.(value & opt (some ip) None doc)
+end
 
 module Main
   (_ : sig end)
@@ -96,9 +200,9 @@ module Main
         lazy (
           List.fold_left (fun acc (k, v) ->
               M.add k v acc)
-            M.empty (Key_gen.mime_type ()))
+            M.empty (K.mime_type ()))
       and default =
-        lazy (Key_gen.default_mime_type ())
+        lazy (K.default_mime_type ())
       in
       fun path ->
         let mime_type =
@@ -202,7 +306,7 @@ module Main
           (Option.fold
              ~none:(Httpaf.Headers.get request.Httpaf.Request.headers "host")
              ~some:(fun a -> Some a)
-             (Key_gen.hostname ()))
+             (K.hostname ()))
       in
       respond_with_empty reqd response
   end
@@ -232,23 +336,16 @@ module Main
         Lwt.return_ok ("pulled " ^ Last_modified.etag ())
       | Error _ as e -> Lwt.return e
     in
-    Dispatch.dispatch store hookf (Key_gen.hook ())
-
-  let key_type kt =
-    match X509.Key_type.of_string kt with
-    | Ok kt -> kt
-    | Error `Msg msg ->
-      Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
-      exit argument_error
+    Dispatch.dispatch store hookf (K.hook ())
 
   let start git_ctx () () stackv4v6 http_client =
-    Git_kv.connect git_ctx (Key_gen.remote ()) >>= fun store ->
+    Git_kv.connect git_ctx (K.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
       (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
-       if Key_gen.tls () then begin
+       if K.tls () then begin
          let rec provision () =
            Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
            let service =
@@ -260,15 +357,15 @@ module Main
                m "listening on 80/HTTP (let's encrypt provisioning)");
            let th1 =
              LE.provision_certificate
-               ~production:(Key_gen.production ())
-               { LE.certificate_seed = Key_gen.cert_seed ()
-               ; LE.certificate_key_type = key_type (Key_gen.cert_key_type ())
-               ; LE.certificate_key_bits = Some (Key_gen.cert_bits ())
-               ; LE.email = Option.bind (Key_gen.email ()) (fun e -> Emile.of_string e |> Result.to_option)
-               ; LE.account_seed = Key_gen.account_seed ()
-               ; LE.account_key_type = key_type (Key_gen.account_key_type ())
-               ; LE.account_key_bits = Some (Key_gen.account_bits ())
-               ; LE.hostname = Key_gen.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
+               ~production:(K.production ())
+               { LE.certificate_seed = K.cert_seed ()
+               ; LE.certificate_key_type = K.cert_key_type ()
+               ; LE.certificate_key_bits = Some (K.cert_bits ())
+               ; LE.email = Option.bind (K.email ()) (fun e -> Emile.of_string e |> Result.to_option)
+               ; LE.account_seed = K.account_seed ()
+               ; LE.account_key_type = K.account_key_type ()
+               ; LE.account_key_bits = Some (K.account_bits ())
+               ; LE.hostname = K.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
                http_client
                >>? fun certificates ->
              Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
@@ -277,22 +374,22 @@ module Main
            | ((), Ok certificates) ->
              Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
              let tls = Tls.Config.server ~certificates () in
-             Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
+             Paf.init ~port:(K.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
              let service =
                Paf.https_service ~tls ~error_handler (request_handler store)
              in
              let stop = Lwt_switch.create () in
              let `Initialized th0 = Paf.serve ~stop service t in
              Logs.info (fun m ->
-                 m "listening on %d/HTTPS" (Key_gen.port ()));
-             Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+                 m "listening on %d/HTTPS" (K.port ()));
+             Paf.init ~port:(K.port ()) (Stack.tcp stackv4v6) >>= fun t ->
              let service =
-               let to_port = (Key_gen.https_port ()) in
+               let to_port = (K.https_port ()) in
                Paf.http_service ~error_handler (Dispatch.redirect to_port)
              in
              let `Initialized th1 = Paf.serve ~stop service t in
              Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
-                           (Key_gen.port ()) (Key_gen.https_port ()));
+                           (K.port ()) (K.https_port ()));
              Lwt.join [ th0 ; th1 ;
                         (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
                >>= fun () ->
@@ -300,12 +397,12 @@ module Main
          in
          provision ()
        end else begin
-         Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+         Paf.init ~port:(K.port ()) (Stack.tcp stackv4v6) >>= fun t ->
          let service =
            Paf.http_service ~error_handler (request_handler store)
          in
          let `Initialized th = Paf.serve service t in
-         Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
+         Logs.info (fun f -> f "listening on %d/HTTP" (K.port ()));
          (th >|= fun v -> Ok v)
        end)
 end
