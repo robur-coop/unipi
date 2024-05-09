@@ -3,9 +3,6 @@ open Lwt.Infix
 module K = struct
   open Cmdliner
 
-  let ip =
-    Arg.conv ~docv:"IP" (Ipaddr.of_string, Ipaddr.pp)
-
   let default_mime_type =
     let doc = Arg.info ~doc:"Default mime-type to serve." ["default-mime-type"] in
     Arg.(value & opt string "application/octet-stream" doc)
@@ -73,18 +70,6 @@ module K = struct
   let email =
     let doc = Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
     Arg.(value & opt (some string) None doc)
-
-  let name =
-    let doc = Arg.info ~doc:"Name of the unikernel" [ "name" ] in
-    Arg.(value & opt string "a.ns.robur.coop" doc)
-
-  let monitor =
-    let doc = Arg.info ~doc:"monitor host IP" [ "monitor" ] in
-    Arg.(value & opt (some ip) None doc)
-
-  let syslog =
-    let doc = Arg.info ~doc:"syslog host IP" [ "syslog" ] in
-    Arg.(value & opt (some ip) None doc)
 
   type t = {
       mime_type: (string * string) list;

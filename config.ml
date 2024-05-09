@@ -1,8 +1,8 @@
-(* mirage >= 4.4.2 & < 4.5.0 *)
+(* mirage >= 4.5.0 & < 4.6.0 *)
 
 open Mirage
 
-let setup = runtime_key ~pos:__POS__ "Unikernel.K.setup"
+let setup = runtime_arg ~pos:__POS__ "Unikernel.K.setup"
 
 let packages = [
   package ~min:"3.7.0" "git-paf";
@@ -21,13 +21,13 @@ let packages = [
 
 let unipi =
   main "Unikernel.Main"
-    ~runtime_keys:[setup]
+    ~runtime_args:[setup]
     ~packages
     (git_client @-> pclock @-> time @-> stackv4v6 @-> alpn_client @-> job)
 
 let enable_monitoring =
   let doc = Key.Arg.info
-      ~doc:"Enable monitoring (only available for solo5 targets)"
+      ~doc:"Enable monitoring (syslog, metrics to influx, log level, statmemprof tracing)"
       [ "enable-monitoring" ]
   in
   Key.(create "enable-monitoring" Arg.(flag doc))
@@ -40,41 +40,44 @@ let management_stack =
     (generic_stackv4v6 ~group:"management" (netif ~group:"management" "management"))
     stack
 
+let docs = "MONITORING PARAMETERS"
+
 let name =
-  runtime_key ~pos:__POS__
-    {|let open Cmdliner in
-      let doc = Arg.info ~doc:"Name of the unikernel" [ "name" ] in
-      Arg.(value & opt string "robur.coop" doc)|}
+  runtime_arg ~pos:__POS__ ~name:"name"
+    {|(let doc = Cmdliner.Arg.info ~doc:"Name of the unikernel" ~docs:%S [ "name" ] in
+       Cmdliner.Arg.(value & opt string "a.ns.robur.coop" doc))|} docs
 
 let monitoring =
-  let monitor = Runtime_key.(v (monitor None)) in
+  let monitor = Runtime_arg.(v (monitor ~docs None)) in
   let connect _ modname = function
-    | [ _ ; _ ; stack; name; monitor ] ->
-      Fmt.str "Lwt.return (match %s with\
-               | None -> Logs.warn (fun m -> m \"no monitor specified, not outputting statistics\")\
-               | Some ip -> %s.create ip ~hostname:%s %s)"
+    | [ _ ; _ ; stack ; name ; monitor ] ->
+      code ~pos:__POS__
+        "Lwt.return (match %s with\
+         | None -> Logs.warn (fun m -> m \"no monitor specified, not outputting statistics\")\
+         | Some ip -> %s.create ip ~hostname:%s %s)"
         monitor modname name stack
     | _ -> assert false
   in
   impl
     ~packages:[ package "mirage-monitoring" ]
-    ~runtime_keys:[ name ; monitor ]
+    ~runtime_args:[ name ; monitor ]
     ~connect "Mirage_monitoring.Make"
     (time @-> pclock @-> stackv4v6 @-> job)
 
 let syslog =
-  let syslog = Runtime_key.(v (syslog None)) in
+  let syslog = Runtime_arg.(v (syslog ~docs None)) in
   let connect _ modname = function
-    | [ _ ; stack; name; syslog ] ->
-      Fmt.str "Lwt.return (match %s with\
-               | None -> Logs.warn (fun m -> m \"no syslog specified, dumping on stdout\")\
-               | Some ip -> Logs.set_reporter (%s.create %s ip ~hostname:%s ()))"
+    | [ _ ; stack ; name ; syslog ] ->
+      code ~pos:__POS__
+        "Lwt.return (match %s with\
+         | None -> Logs.warn (fun m -> m \"no syslog specified, dumping on stdout\")\
+         | Some ip -> Logs.set_reporter (%s.create %s ip ~hostname:%s ()))"
         syslog modname stack name
     | _ -> assert false
   in
   impl
     ~packages:[ package ~sublibs:["mirage"] ~min:"0.4.0" "logs-syslog" ]
-    ~runtime_keys:[ name ; syslog ]
+    ~runtime_args:[ name ; syslog ]
     ~connect "Logs_syslog_mirage.Udp"
     (pclock @-> stackv4v6 @-> job)
 
@@ -97,25 +100,25 @@ let alpn_client =
   paf_client (tcpv4v6_of_stackv4v6 stack) dns
 
 let ssh_key =
-  Runtime_key.create ~pos:__POS__ ~name:"ssh_key"
+  Runtime_arg.create ~pos:__POS__ ~name:"ssh_key"
     {|let open Cmdliner in
       let doc = Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
       Arg.(value & opt (some string) None doc)|}
 
 let ssh_password =
-  Runtime_key.create ~pos:__POS__
+  Runtime_arg.create ~pos:__POS__
     {|let open Cmdliner in
      let doc = Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
       Arg.(value & opt (some string) None doc)|}
 
 let ssh_authenticator =
-  Runtime_key.create ~pos:__POS__
+  Runtime_arg.create ~pos:__POS__
     {|let open Cmdliner in
      let doc = Arg.info ~doc:"SSH authenticator." ["authenticator"] in
       Arg.(value & opt (some string) None doc)|}
 
 let tls_authenticator =
-  Runtime_key.create ~pos:__POS__
+  Runtime_arg.create ~pos:__POS__
     {|let open Cmdliner in
       let doc = "TLS host authenticator. See git_http in lib/mirage/mirage.mli for a description of the format."
      in
