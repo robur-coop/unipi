@@ -383,7 +383,7 @@ module Main
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
-      (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
+      (function Ok () -> () | Error (`Msg msg) -> failwith msg)
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
        if tls then begin
          let request_handler = request_handler mime_type hook store in
