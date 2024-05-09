@@ -3,74 +3,74 @@ open Lwt.Infix
 module K = struct
   open Cmdliner
 
-  let info ?(docs = Mirage_runtime.s_arg) = Arg.info ~docs
+  let docs = Manpage.s_arguments
 
   let default_mime_type =
-    let doc = info ~doc:"Default mime-type to serve." ["default-mime-type"] in
+    let doc = Arg.info ~doc:"Default mime-type to serve." ~docs ["default-mime-type"] in
     Arg.(value & opt string "application/octet-stream" doc)
 
   let mime_type =
-    let doc = info ~doc:"Overwrite mime-type for a path." ["mime-type"] in
+    let doc = Arg.info ~doc:"Overwrite mime-type for a path." ~docs ["mime-type"] in
     Arg.(value & opt_all (pair ~sep:':' string string) [] doc)
 
   let hook =
-    let doc = info ~doc:"Webhook for pulling the repository." ["hook"] in
+    let doc = Arg.info ~doc:"Webhook for pulling the repository." ~docs ["hook"] in
     Arg.(value & opt string "/hook" doc)
 
   let remote =
-    let doc = info
+    let doc = Arg.info
         ~doc:"Remote repository url, use suffix #foo to specify a branch 'foo': \
               https://github.com/hannesm/unipi.git#gh-pages"
-        ["remote"]
+        ~docs ["remote"]
     in
     Arg.(required & opt (some string) None doc)
 
   let port =
-    let doc = info ~doc:"HTTP listen port." ["port"] in
+    let doc = Arg.info ~doc:"HTTP listen port." ~docs ["port"] in
     Arg.(value & opt int 80 doc)
 
   let https_port =
-    let doc = info ~doc:"HTTPS listen port." ["https-port"] in
+    let doc = Arg.info ~doc:"HTTPS listen port." ~docs ["https-port"] in
     Arg.(value & opt int 443 doc)
 
   let tls =
-    let doc = info ~doc:"Enable TLS." ["tls"] in
+    let doc = Arg.info ~doc:"Enable TLS." ~docs ["tls"] in
     Arg.(value & flag doc)
 
   let hostname =
-    let doc = info ~doc:"Host name (used for let's encrypt and redirects)." ["hostname"] in
+    let doc = Arg.info ~doc:"Host name (used for let's encrypt and redirects)." ~docs ["hostname"] in
     Arg.(value & opt (some string) None doc)
 
   let production =
-    let doc = info ~doc:"Let's encrypt production environment." ["production"] in
+    let doc = Arg.info ~doc:"Let's encrypt production environment." ~docs ["production"] in
     Arg.(value & flag doc)
 
   let cert_seed =
-    let doc = info ~doc:"Let's encrypt certificate seed." ["cert-seed"] in
+    let doc = Arg.info ~doc:"Let's encrypt certificate seed." ~docs ["cert-seed"] in
     Arg.(value & opt (some string) None doc)
 
   let cert_key_type =
-    let doc = info ~doc:"certificate key type" ["cert-key-type"] in
+    let doc = Arg.info ~doc:"certificate key type" ~docs ["cert-key-type"] in
     Arg.(value & opt (enum X509.Key_type.strings) `RSA doc)
 
   let cert_bits =
-    let doc = info ~doc:"certificate public key bits" ["cert-bits"] in
+    let doc = Arg.info ~doc:"certificate public key bits" ~docs ["cert-bits"] in
     Arg.(value & opt int 4096 doc)
 
   let account_seed =
-    let doc = info ~doc:"Let's encrypt account seed." ["account-seed"] in
+    let doc = Arg.info ~doc:"Let's encrypt account seed." ~docs ["account-seed"] in
     Arg.(value & opt (some string) None doc)
 
   let account_key_type =
-    let doc = info ~doc:"account key type" ["account-key-type"] in
+    let doc = Arg.info ~doc:"account key type" ~docs ["account-key-type"] in
     Arg.(value & opt (enum X509.Key_type.strings) `RSA doc)
 
   let account_bits =
-    let doc = info ~doc:"account public key bits" ["account-bits"] in
+    let doc = Arg.info ~doc:"account public key bits" ~docs ["account-bits"] in
     Arg.(value & opt int 4096 doc)
 
   let email =
-    let doc = info ~doc:"Let's encrypt E-Mail." ["email"] in
+    let doc = Arg.info ~doc:"Let's encrypt E-Mail." ~docs ["email"] in
     Arg.(value & opt (some string) None doc)
 
   type t = {
