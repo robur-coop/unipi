@@ -106,19 +106,19 @@ let ssh_key =
       Arg.(value & opt (some string) None doc)|}
 
 let ssh_password =
-  Runtime_arg.create ~pos:__POS__
+  Runtime_arg.create ~pos:__POS__ ~name:"ssh_password"
     {|let open Cmdliner in
      let doc = Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
       Arg.(value & opt (some string) None doc)|}
 
 let ssh_authenticator =
-  Runtime_arg.create ~pos:__POS__
+  Runtime_arg.create ~pos:__POS__ ~name:"ssh_authenticator"
     {|let open Cmdliner in
      let doc = Arg.info ~doc:"SSH authenticator." ["authenticator"] in
       Arg.(value & opt (some string) None doc)|}
 
 let tls_authenticator =
-  Runtime_arg.create ~pos:__POS__
+  Runtime_arg.create ~pos:__POS__ ~name:"tls_authenticator"
     {|let open Cmdliner in
       let doc = "TLS host authenticator. See git_http in lib/mirage/mirage.mli for a description of the format."
      in
