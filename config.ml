@@ -7,7 +7,7 @@ let setup = runtime_arg ~pos:__POS__ "Unikernel.K.setup"
 let packages = [
   package ~min:"3.7.0" "git-paf";
   package ~min:"3.7.0" "git";
-  package ~min:"0.0.2" "git-kv";
+  package ~min:"0.0.5" "git-kv";
   package "tls-mirage";
   package ~min:"1.3.0" "magic-mime";
   package "logs";
@@ -17,6 +17,7 @@ let packages = [
   package ~min:"0.5.0" "paf" ~sublibs:[ "mirage" ];
   package ~min:"0.0.3" "http-mirage-client";
   package "letsencrypt-mirage";
+  package "ohex";
 ]
 
 let unipi =
