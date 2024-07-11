@@ -1,4 +1,4 @@
-(* mirage >= 4.5.1 & < 4.6.0 *)
+(* mirage >= 4.6.0 & < 4.6.1 *)
 
 open Mirage
 
@@ -15,7 +15,7 @@ let packages = [
   package "awa-mirage";
   package ~min:"0.3.0" "letsencrypt";
   package ~min:"0.5.0" "paf" ~sublibs:[ "mirage" ];
-  package ~min:"0.0.3" "http-mirage-client";
+  package ~min:"0.0.6" "http-mirage-client";
   package "letsencrypt-mirage";
   package "ohex";
 ]
@@ -92,12 +92,11 @@ let optional_syslog pclock stack =
     (syslog $ pclock $ stack)
     noop
 
-let dns = generic_dns_client stack
+let he = generic_happy_eyeballs stack
+let dns = generic_dns_client stack he
 
 let alpn_client =
-  let dns =
-    mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns)
-  in
+  let dns = mimic_happy_eyeballs stack he dns in
   paf_client (tcpv4v6_of_stackv4v6 stack) dns
 
 let ssh_key =
@@ -127,7 +126,7 @@ let tls_authenticator =
      Arg.(value & opt (some string) None doc)|}
 
 let git_client =
-  let git = mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
+  let git = mimic_happy_eyeballs stack he dns in
   let tcp = tcpv4v6_of_stackv4v6 stack in
   merge_git_clients (git_tcp tcp git)
     (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator:ssh_authenticator tcp git)
