@@ -132,8 +132,6 @@ module K = struct
           $ port)
 end
 
-let argument_error = 64
-
 module Main
   (_ : sig end)
   (P: Mirage_clock.PCLOCK)
@@ -372,7 +370,7 @@ module Main
     | Ok kt -> kt
     | Error `Msg msg ->
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
-      exit argument_error
+      exit Mirage_runtime.argument_error
 
   let start git_ctx () () stackv4v6 http_client
         { K.remote; tls; production; cert_seed; cert_key_type; cert_bits; email;
@@ -414,25 +412,29 @@ module Main
            | ((), (Error _ as err)) -> Lwt.return err
            | ((), Ok certificates) ->
              Logs.debug (fun m -> m "Got certificates from let's encrypt.") ;
-             let tls = Tls.Config.server ~certificates () in
-             Paf.init ~port:https_port (Stack.tcp stackv4v6) >>= fun t ->
-             let service =
-               Paf.https_service ~tls ~error_handler request_handler
-             in
-             let stop = Lwt_switch.create () in
-             let `Initialized th0 = Paf.serve ~stop service t in
-             Logs.info (fun m -> m "listening on %d/HTTPS" port);
-             Paf.init ~port (Stack.tcp stackv4v6) >>= fun t ->
-             let service =
-               let to_port = https_port in
-               Paf.http_service ~error_handler (Dispatch.redirect ~hostname to_port)
-             in
-             let `Initialized th1 = Paf.serve ~stop service t in
-             Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS" port https_port);
-             Lwt.join [ th0 ; th1 ;
-                        (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
+             match Tls.Config.server ~certificates () with
+             | Error `Msg msg as err ->
+               Logs.err (fun m -> m "Couldn't construct the TLS configuration: %s" msg);
+               Lwt.return err
+             | Ok tls ->
+               Paf.init ~port:https_port (Stack.tcp stackv4v6) >>= fun t ->
+               let service =
+                 Paf.https_service ~tls ~error_handler request_handler
+               in
+               let stop = Lwt_switch.create () in
+               let `Initialized th0 = Paf.serve ~stop service t in
+               Logs.info (fun m -> m "listening on %d/HTTPS" port);
+               Paf.init ~port (Stack.tcp stackv4v6) >>= fun t ->
+               let service =
+                 let to_port = https_port in
+                 Paf.http_service ~error_handler (Dispatch.redirect ~hostname to_port)
+               in
+               let `Initialized th1 = Paf.serve ~stop service t in
+               Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS" port https_port);
+               Lwt.join [ th0 ; th1 ;
+                          (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
                >>= fun () ->
-             provision ()
+               provision ()
          in
          provision ()
        end else begin
