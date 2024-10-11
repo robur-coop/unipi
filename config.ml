@@ -1,8 +1,6 @@
-(* mirage >= 4.7.0 & < 4.8.0 *)
+(* mirage >= 4.8.0 & < 4.9.0 *)
 
 open Mirage
-
-let setup = runtime_arg ~pos:__POS__ "Unikernel.K.setup"
 
 let packages = [
   package ~min:"3.7.0" "git-paf";
@@ -22,7 +20,6 @@ let packages = [
 
 let unipi =
   main "Unikernel.Main"
-    ~runtime_args:[setup]
     ~packages
     (git_client @-> pclock @-> time @-> stackv4v6 @-> alpn_client @-> job)
 
@@ -99,38 +96,11 @@ let alpn_client =
   let dns = mimic_happy_eyeballs stack he dns in
   paf_client (tcpv4v6_of_stackv4v6 stack) dns
 
-let ssh_key =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-      let doc = Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
-      Arg.(value & opt (some string) None doc)|}
-
-let ssh_password =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-     let doc = Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
-      Arg.(value & opt (some string) None doc)|}
-
-let ssh_authenticator =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-     let doc = Arg.info ~doc:"SSH authenticator." ["authenticator"] in
-      Arg.(value & opt (some string) None doc)|}
-
-let tls_authenticator =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-      let doc = "TLS host authenticator. See git_http in lib/mirage/mirage.mli for a description of the format."
-     in
-     let doc = Arg.info ~doc ["tls-authenticator"] in
-     Arg.(value & opt (some string) None doc)|}
-
 let git_client =
   let git = mimic_happy_eyeballs stack he dns in
   let tcp = tcpv4v6_of_stackv4v6 stack in
   merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator:ssh_authenticator tcp git)
-       (git_http ~authenticator:tls_authenticator tcp git))
+    (merge_git_clients (git_ssh tcp git) (git_http tcp git))
 
 let () =
   register "unipi" [
