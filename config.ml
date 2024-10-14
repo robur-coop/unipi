@@ -43,7 +43,7 @@ let name =
     {|let doc = Cmdliner.Arg.info ~doc:"Name of the unikernel"
         ~docs:Mirage_runtime.s_log [ "name" ]
       in
-      Cmdliner.Arg.(value & opt string "a.ns.robur.coop" doc)|}
+      Cmdliner.Arg.(value & opt string "robur.coop" doc)|}
 
 let monitoring =
   let monitor = Runtime_arg.(v (monitor None)) in
