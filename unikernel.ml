@@ -5,15 +5,17 @@ module K = struct
 
   let default_mime_type =
     let doc = Arg.info ~doc:"Default mime-type to serve." ["default-mime-type"] in
-    Arg.(value & opt string "application/octet-stream" doc)
+    Mirage_runtime.register_arg
+      Arg.(value & opt string "application/octet-stream" doc)
 
   let mime_type =
     let doc = Arg.info ~doc:"Overwrite mime-type for a path." ["mime-type"] in
-    Arg.(value & opt_all (pair ~sep:':' string string) [] doc)
+    Mirage_runtime.register_arg
+      Arg.(value & opt_all (pair ~sep:':' string string) [] doc)
 
   let hook =
     let doc = Arg.info ~doc:"Webhook for pulling the repository." ["hook"] in
-    Arg.(value & opt string "/hook" doc)
+    Mirage_runtime.register_arg Arg.(value & opt string "/hook" doc)
 
   let remote =
     let doc = Arg.info
@@ -21,115 +23,57 @@ module K = struct
               https://github.com/hannesm/unipi.git#gh-pages"
         ["remote"]
     in
-    Arg.(required & opt (some string) None doc)
+    Mirage_runtime.register_arg Arg.(required & opt (some string) None doc)
 
   let port =
     let doc = Arg.info ~doc:"HTTP listen port." ["port"] in
-    Arg.(value & opt int 80 doc)
+    Mirage_runtime.register_arg Arg.(value & opt int 80 doc)
 
   let https_port =
     let doc = Arg.info ~doc:"HTTPS listen port." ["https-port"] in
-    Arg.(value & opt int 443 doc)
+    Mirage_runtime.register_arg Arg.(value & opt int 443 doc)
 
   let tls =
     let doc = Arg.info ~doc:"Enable TLS." ["tls"] in
-    Arg.(value & flag doc)
+    Mirage_runtime.register_arg Arg.(value & flag doc)
 
   let hostname =
     let doc = Arg.info ~doc:"Host name (used for let's encrypt and redirects)." ["hostname"] in
-    Arg.(value & opt (some string) None doc)
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
   let production =
     let doc = Arg.info ~doc:"Let's encrypt production environment." ["production"] in
-    Arg.(value & flag doc)
+    Mirage_runtime.register_arg Arg.(value & flag doc)
 
   let cert_seed =
     let doc = Arg.info ~doc:"Let's encrypt certificate seed." ["cert-seed"] in
-    Arg.(value & opt (some string) None doc)
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
   let cert_key_type =
     let doc = Arg.info ~doc:"certificate key type" ["cert-key-type"] in
-    Arg.(value & opt (enum X509.Key_type.strings) `RSA doc)
+    Mirage_runtime.register_arg
+      Arg.(value & opt (enum X509.Key_type.strings) `RSA doc)
 
   let cert_bits =
     let doc = Arg.info ~doc:"certificate public key bits" ["cert-bits"] in
-    Arg.(value & opt int 4096 doc)
+    Mirage_runtime.register_arg Arg.(value & opt int 4096 doc)
 
   let account_seed =
     let doc = Arg.info ~doc:"Let's encrypt account seed." ["account-seed"] in
-    Arg.(value & opt (some string) None doc)
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
   let account_key_type =
     let doc = Arg.info ~doc:"account key type" ["account-key-type"] in
-    Arg.(value & opt (enum X509.Key_type.strings) `RSA doc)
+    Mirage_runtime.register_arg
+      Arg.(value & opt (enum X509.Key_type.strings) `RSA doc)
 
   let account_bits =
     let doc = Arg.info ~doc:"account public key bits" ["account-bits"] in
-    Arg.(value & opt int 4096 doc)
+    Mirage_runtime.register_arg Arg.(value & opt int 4096 doc)
 
   let email =
     let doc = Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
-    Arg.(value & opt (some string) None doc)
-
-  type t = {
-      mime_type: (string * string) list;
-      default_mime_type: string;
-      hostname: string option;
-      hook: string;
-      remote: string;
-      tls: bool;
-      production: bool;
-      cert_seed: string option;
-      cert_key_type: X509.Key_type.t;
-      cert_bits: int;
-      email: string option;
-      account_seed: string option;
-      account_key_type: X509.Key_type.t;
-      account_bits: int;
-      https_port: int;
-      port: int;
-    }
-
-  let v mime_type default_mime_type hostname hook remote tls production
-        cert_seed cert_key_type cert_bits email account_seed account_key_type
-        account_bits https_port port
-    = {
-      mime_type;
-      default_mime_type;
-      hostname;
-      hook;
-      remote;
-      tls;
-      production;
-      cert_seed;
-      cert_key_type;
-      cert_bits;
-      email;
-      account_seed;
-      account_key_type;
-      account_bits;
-      https_port;
-      port;
-    }
-
-  let setup =
-    Term.(const v
-          $ mime_type
-          $ default_mime_type
-          $ hostname
-          $ hook
-          $ remote
-          $ tls
-          $ production
-          $ cert_seed
-          $ cert_key_type
-          $ cert_bits
-          $ email
-          $ account_seed
-          $ account_key_type
-          $ account_bits
-          $ https_port
-          $ port)
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 end
 
 module Main
@@ -372,19 +316,16 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit Mirage_runtime.argument_error
 
-  let start git_ctx () () stackv4v6 http_client
-        { K.remote; tls; production; cert_seed; cert_key_type; cert_bits; email;
-          account_seed; account_key_type; account_bits; hostname; mime_type;
-          default_mime_type; hook; port; https_port } =
-    let mime_type = Dispatch.mime_type_fn mime_type default_mime_type in
-    Git_kv.connect git_ctx remote >>= fun store ->
+  let start git_ctx () () stackv4v6 http_client =
+    let mime_type = Dispatch.mime_type_fn (K.mime_type ()) (K.default_mime_type ()) in
+    Git_kv.connect git_ctx (K.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
       (function Ok () -> () | Error (`Msg msg) -> failwith msg)
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
-       if tls then begin
-         let request_handler = request_handler mime_type hook store in
+       if K.tls () then begin
+         let request_handler = request_handler mime_type (K.hook ()) store in
          let rec provision () =
            Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
            let service =
@@ -396,15 +337,15 @@ module Main
                m "listening on 80/HTTP (let's encrypt provisioning)");
            let th1 =
              LE.provision_certificate
-               ~production:production
-               { LE.certificate_seed = cert_seed
-               ; LE.certificate_key_type = cert_key_type
-               ; LE.certificate_key_bits = Some cert_bits
-               ; LE.email = Option.bind email (fun e -> Emile.of_string e |> Result.to_option)
-               ; LE.account_seed = account_seed
-               ; LE.account_key_type = account_key_type
-               ; LE.account_key_bits = Some account_bits
-               ; LE.hostname = hostname |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
+               ~production:(K.production ())
+               { LE.certificate_seed = K.cert_seed ()
+               ; LE.certificate_key_type = K.cert_key_type ()
+               ; LE.certificate_key_bits = Some (K.cert_bits ())
+               ; LE.email = Option.bind (K.email ()) (fun e -> Emile.of_string e |> Result.to_option)
+               ; LE.account_seed = K.account_seed ()
+               ; LE.account_key_type = K.account_key_type ()
+               ; LE.account_key_bits = Some (K.account_bits ())
+               ; LE.hostname = K.hostname () |> Option.get |> Domain_name.of_string_exn |> Domain_name.host_exn }
                http_client
                >>? fun certificates ->
              Lwt_switch.turn_off stop >>= fun () -> Lwt.return_ok certificates in
@@ -417,20 +358,20 @@ module Main
                Logs.err (fun m -> m "Couldn't construct the TLS configuration: %s" msg);
                Lwt.return err
              | Ok tls ->
-               Paf.init ~port:https_port (Stack.tcp stackv4v6) >>= fun t ->
+               Paf.init ~port:(K.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
                let service =
                  Paf.https_service ~tls ~error_handler request_handler
                in
                let stop = Lwt_switch.create () in
                let `Initialized th0 = Paf.serve ~stop service t in
-               Logs.info (fun m -> m "listening on %d/HTTPS" port);
-               Paf.init ~port (Stack.tcp stackv4v6) >>= fun t ->
+               Logs.info (fun m -> m "listening on %d/HTTPS" (K.port ()));
+               Paf.init ~port:(K.port ()) (Stack.tcp stackv4v6) >>= fun t ->
                let service =
-                 let to_port = https_port in
-                 Paf.http_service ~error_handler (Dispatch.redirect ~hostname to_port)
+                 let to_port = K.https_port () in
+                 Paf.http_service ~error_handler (Dispatch.redirect ~hostname:(K.hostname ()) to_port)
                in
                let `Initialized th1 = Paf.serve ~stop service t in
-               Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS" port https_port);
+               Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS" (K.port ()) (K.https_port ()));
                Lwt.join [ th0 ; th1 ;
                           (Time.sleep_ns (Duration.of_day 80) >>= fun () -> Lwt_switch.turn_off stop) ]
                >>= fun () ->
@@ -438,11 +379,11 @@ module Main
          in
          provision ()
        end else begin
-         let request_handler = request_handler mime_type hook store in
-         Paf.init ~port (Stack.tcp stackv4v6) >>= fun t ->
+         let request_handler = request_handler mime_type (K.hook ()) store in
+         Paf.init ~port:(K.port ()) (Stack.tcp stackv4v6) >>= fun t ->
          let service = Paf.http_service ~error_handler request_handler in
          let `Initialized th = Paf.serve service t in
-         Logs.info (fun f -> f "listening on %d/HTTP" port);
+         Logs.info (fun f -> f "listening on %d/HTTP" (K.port ()));
          (th >|= fun v -> Ok v)
        end)
 end
