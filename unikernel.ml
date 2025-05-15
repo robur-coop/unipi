@@ -13,18 +13,6 @@ module K = struct
     Mirage_runtime.register_arg
       Arg.(value & opt_all (pair ~sep:':' string string) [] doc)
 
-  let hook =
-    let doc = Arg.info ~doc:"Webhook for pulling the repository." ["hook"] in
-    Mirage_runtime.register_arg Arg.(value & opt string "/hook" doc)
-
-  let remote =
-    let doc = Arg.info
-        ~doc:"Remote repository url, use suffix #foo to specify a branch 'foo': \
-              https://github.com/hannesm/unipi.git#gh-pages"
-        ["remote"]
-    in
-    Mirage_runtime.register_arg Arg.(required & opt (some string) None doc)
-
   let port =
     let doc = Arg.info ~doc:"HTTP listen port." ["port"] in
     Mirage_runtime.register_arg Arg.(value & opt int 80 doc)
@@ -77,7 +65,7 @@ module K = struct
 end
 
 module Main
-  (_ : sig end)
+  (Store : Mirage_kv.RO)
   (Stack: Tcpip.Stack.V4V6)
   (HTTP: Http_mirage_client.S) = struct
 
@@ -97,26 +85,10 @@ module Main
     let m' = Array.get month (pred m) in
     Printf.sprintf "%s, %02d %s %04d %02d:%02d:%02d GMT" weekday d m' y hh mm ss
 
-    (* cache the last commit (last modified and last hash) *)
-    let last = ref ("", "")
-
-    (* cache control: all resources use last-modified + etag of last commit *)
-    let retrieve_last_commit store =
-      Git_kv.digest store Mirage_kv.Key.empty >>= fun last_hash ->
-      Git_kv.last_modified store Mirage_kv.Key.empty >|= fun r ->
-      let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Mirage_ptime.now ()) r in
-      let last_date = ptime_to_http_date v in
-      last := (last_date, Ohex.encode (Result.get_ok last_hash))
-
-    let not_modified request =
+    let not_modified last_modified request =
       match H1.Headers.get request.H1.Request.headers "if-modified-since" with
-      | Some ts -> String.equal ts (fst !last)
-      | None -> match H1.Headers.get request.H1.Request.headers "if-none-match" with
-        | Some etags -> List.mem (snd !last) (Astring.String.cuts ~sep:"," etags)
-        | None -> false
-
-    let last_modified () = fst !last
-    let etag () = snd !last
+      | Some ts -> String.equal ts (ptime_to_http_date last_modified)
+      | None -> false
   end
 
   let http_status =
@@ -184,68 +156,54 @@ module Main
           content_type ^ "; charset=utf-8" (* default to utf-8 *)
         | content_type -> content_type
 
-    let dispatch mime_type store hookf hook_url _conn reqd =
+    let dispatch mime_type store _conn reqd =
       let request = H1.Reqd.request reqd in
       let path =
         Uri.(pct_decode (path (of_string request.H1.Request.target)))
       in
       Logs.info (fun f -> f "requested %s" path);
-      if String.equal hook_url path then
-        begin
-          Lwt.async @@ fun () -> hookf () >>= function
-          | Ok data ->
-            let headers = H1.Headers.of_list
-              [ "content-length", string_of_int (String.length data) ] in
-            let resp = H1.Response.create ~headers `OK in
-            http_status resp;
-            H1.Reqd.respond_with_string reqd resp data ;
-            Lwt.return_unit
-          | Error (`Msg msg) ->
-            let headers = H1.Headers.of_list
-              [ "content-length", string_of_int (String.length msg) ] in
-            let resp = H1.Response.create ~headers `Internal_server_error in
-            http_status resp;
-            H1.Reqd.respond_with_string reqd resp msg ;
-            Lwt.return_unit
-        end
-      else
-        if Last_modified.not_modified request then
+      Lwt.async @@ fun () ->
+      let find path =
+        let lookup path =
+          let k = Mirage_kv.Key.v path in
+          let open Lwt_result.Syntax in
+          let* data = Store.get store k in
+          let+ last_modified = Store.last_modified store k in
+          (last_modified, data)
+        in
+        lookup path >>= function
+        | Ok (last_modified, r) -> Lwt.return_ok (path, last_modified, r)
+        | Error _ ->
+          let effective_path = path ^ "/index.html" in
+          Lwt_result.map (fun (last_modified, r) -> effective_path, last_modified, r)
+            (lookup effective_path)
+      in
+      find path >>= function
+      | Ok (effective_path, last_modified, data) ->
+        if Last_modified.not_modified last_modified request then
           let resp = H1.Response.create `Not_modified in
-          respond_with_empty reqd resp
+          respond_with_empty reqd resp ;
+          Lwt.return_unit
         else
-          Lwt.async @@ fun () ->
-          let find path =
-            let lookup path =
-              Git_kv.get store (Mirage_kv.Key.v path)
-            in
-            lookup path >>= function
-            | Ok r -> Lwt.return_ok (path, r)
-            | Error _ ->
-              let effective_path = path ^ "/index.html" in
-              Lwt_result.map (fun r -> effective_path, r)
-                (lookup effective_path)
-          in
-          find path >>= function
-          | Ok (effective_path, data) ->
-            let headers = [
-              "content-type", mime_type effective_path ;
-              "etag", Last_modified.etag () ;
-              "last-modified", Last_modified.last_modified () ;
-              "content-length", string_of_int (String.length data) ;
-            ] in
-            let headers = H1.Headers.of_list headers in
-            let resp = H1.Response.create ~headers `OK in
-            http_status resp;
-            H1.Reqd.respond_with_string reqd resp data ;
-            Lwt.return_unit
-          | Error _ ->
-            let data = "Resource not found " ^ path in
-            let headers = H1.Headers.of_list
-                [ "content-length", string_of_int (String.length data) ] in
-            let resp = H1.Response.create ~headers `Not_found in
-            http_status resp;
-            H1.Reqd.respond_with_string reqd resp data ;
-            Lwt.return_unit
+          let headers = [
+            "content-type", mime_type effective_path ;
+            (* "etag", Last_modified.etag () ; *)
+            "last-modified", Last_modified.ptime_to_http_date last_modified ;
+            "content-length", string_of_int (String.length data) ;
+          ] in
+          let headers = H1.Headers.of_list headers in
+          let resp = H1.Response.create ~headers `OK in
+          http_status resp;
+          H1.Reqd.respond_with_string reqd resp data ;
+          Lwt.return_unit
+      | Error _ ->
+        let data = "Resource not found " ^ path in
+        let headers = H1.Headers.of_list
+            [ "content-length", string_of_int (String.length data) ] in
+        let resp = H1.Response.create ~headers `Not_found in
+        http_status resp;
+        H1.Reqd.respond_with_string reqd resp data ;
+        Lwt.return_unit
 
     let redirect ~hostname port _ _ reqd =
       let request = H1.Reqd.request reqd in
@@ -292,18 +250,10 @@ module Main
 
   let ( >>? ) = Lwt_result.bind
 
-  let request_handler mime_type hook store _flow
+  let request_handler mime_type store _flow
       : _ -> H1.Server_connection.request_handler
     =
-    let hookf () =
-      Git_kv.pull store >>= function
-      | Ok [] -> Lwt.return_ok "pulled, no changes"
-      | Ok _ ->
-        Last_modified.retrieve_last_commit store >>= fun () ->
-        Lwt.return_ok ("pulled " ^ Last_modified.etag ())
-      | Error _ as e -> Lwt.return e
-    in
-    Dispatch.dispatch mime_type store hookf hook
+    Dispatch.dispatch mime_type store
 
   let key_type kt =
     match X509.Key_type.of_string kt with
@@ -312,16 +262,13 @@ module Main
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
       exit Mirage_runtime.argument_error
 
-  let start git_ctx stackv4v6 http_client =
+  let start store stackv4v6 http_client =
     let mime_type = Dispatch.mime_type_fn (K.mime_type ()) (K.default_mime_type ()) in
-    Git_kv.connect git_ctx (K.remote ()) >>= fun store ->
-    Last_modified.retrieve_last_commit store >>= fun () ->
-    Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
+
     Lwt.map
       (function Ok () -> () | Error (`Msg msg) -> failwith msg)
-      (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
-       if K.tls () then begin
-         let request_handler = request_handler mime_type (K.hook ()) store in
+      (if K.tls () then begin
+         let request_handler = request_handler mime_type store in
          let rec provision () =
            Paf.init ~port:80 (Stack.tcp stackv4v6) >>= fun t ->
            let service =
@@ -375,7 +322,7 @@ module Main
          in
          provision ()
        end else begin
-         let request_handler = request_handler mime_type (K.hook ()) store in
+         let request_handler = request_handler mime_type store in
          Paf.init ~port:(K.port ()) (Stack.tcp stackv4v6) >>= fun t ->
          let service = Paf.http_service ~error_handler request_handler in
          let `Initialized th = Paf.serve service t in

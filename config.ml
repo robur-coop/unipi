@@ -3,9 +3,6 @@
 open Mirage
 
 let packages = [
-  package ~min:"3.7.0" "git-paf";
-  package ~min:"3.7.0" "git";
-  package ~min:"0.0.5" "git-kv";
   package "tls-mirage";
   package ~min:"1.3.0" "magic-mime";
   package "logs";
@@ -18,9 +15,9 @@ let packages = [
   package "ohex";
 ]
 
-let unipi =
+let unitar =
   main "Unikernel.Main" ~packages
-    (git_client @-> stackv4v6 @-> alpn_client @-> job)
+    (kv_ro @-> stackv4v6 @-> alpn_client @-> job)
 
 let enable_monitoring =
   let doc = Key.Arg.info
@@ -95,15 +92,11 @@ let alpn_client =
   let dns = mimic_happy_eyeballs stack he dns in
   paf_client (tcpv4v6_of_stackv4v6 stack) dns
 
-let git_client =
-  let git = mimic_happy_eyeballs stack he dns in
-  let tcp = tcpv4v6_of_stackv4v6 stack in
-  merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh tcp git) (git_http tcp git))
+let store = tar_kv_ro (block_of_file "content")
 
 let () =
-  register "unipi" [
+  register "unitar" [
     optional_syslog management_stack ;
     optional_monitoring management_stack ;
-    unipi $ git_client $ stack $ alpn_client
+    unitar $ store $ stack $ alpn_client
   ]
