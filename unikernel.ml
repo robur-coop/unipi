@@ -167,19 +167,19 @@ module Main
         let lookup path =
           let k = Mirage_kv.Key.v path in
           let open Lwt_result.Syntax in
-          let* data = Store.get store k in
+          let* size = Store.size store k in
           let+ last_modified = Store.last_modified store k in
-          (last_modified, data)
+          (last_modified, size)
         in
         lookup path >>= function
-        | Ok (last_modified, r) -> Lwt.return_ok (path, last_modified, r)
+        | Ok (last_modified, size) -> Lwt.return_ok (path, last_modified, size)
         | Error _ ->
           let effective_path = path ^ "/index.html" in
-          Lwt_result.map (fun (last_modified, r) -> effective_path, last_modified, r)
+          Lwt_result.map (fun (last_modified, size) -> effective_path, last_modified, size)
             (lookup effective_path)
       in
       find path >>= function
-      | Ok (effective_path, last_modified, data) ->
+      | Ok (effective_path, last_modified, size) ->
         if Last_modified.not_modified last_modified request then
           let resp = H1.Response.create `Not_modified in
           respond_with_empty reqd resp ;
@@ -189,13 +189,42 @@ module Main
             "content-type", mime_type effective_path ;
             (* "etag", Last_modified.etag () ; *)
             "last-modified", Last_modified.ptime_to_http_date last_modified ;
-            "content-length", string_of_int (String.length data) ;
+            "content-length", Optint.Int63.to_string size ;
           ] in
           let headers = H1.Headers.of_list headers in
           let resp = H1.Response.create ~headers `OK in
           http_status resp;
-          H1.Reqd.respond_with_string reqd resp data ;
-          Lwt.return_unit
+          let stream =
+            H1.Reqd.respond_with_streaming
+              ~flush_headers_immediately:true
+              reqd resp
+          in
+          let rec loop offset =
+            let length = Optint.Int63.(to_int (min (of_int 16384) (sub size offset))) in
+            if length <= 0 then (H1.Body.Writer.close stream; Lwt.return_unit)
+            else
+              Store.get_partial store
+                (Mirage_kv.Key.v effective_path)
+                ~offset ~length
+              >>= function
+              | Ok data ->
+                H1.Body.Writer.write_string stream data;
+                let continue, wakeup = Lwt.task () in
+                H1.Body.Writer.flush_with_reason stream
+                  (function
+                    | `Closed ->
+                      Logs.warn (fun m -> m "Closed while handling %S" effective_path); ()
+                    | `Written -> Lwt.wakeup wakeup ());
+                continue >>= fun () ->
+                loop (Optint.Int63.(add offset (of_int length)))
+              | Error e ->
+                Logs.warn (fun m -> m "Error reading %s: %a"
+                              effective_path
+                              Store.pp_error e);
+                H1.Body.Writer.close stream;
+                Lwt.return_unit
+          in
+          loop Optint.Int63.zero
       | Error _ ->
         let data = "Resource not found " ^ path in
         let headers = H1.Headers.of_list
