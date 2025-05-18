@@ -167,9 +167,14 @@ module Main
         let lookup path =
           let k = Mirage_kv.Key.v path in
           let open Lwt_result.Syntax in
-          let* size = Store.size store k in
-          let+ last_modified = Store.last_modified store k in
-          (last_modified, size)
+          let* exists = Store.exists store k in
+          match exists with
+          | None | Some `Dictionary ->
+            Lwt_result.fail (`Not_found k)
+          | Some `Value ->
+            let* size = Store.size store k in
+            let+ last_modified = Store.last_modified store k in
+            (last_modified, size)
         in
         lookup path >>= function
         | Ok (last_modified, size) -> Lwt.return_ok (path, last_modified, size)
