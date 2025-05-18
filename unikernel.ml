@@ -213,10 +213,12 @@ module Main
                 H1.Body.Writer.flush_with_reason stream
                   (function
                     | `Closed ->
-                      Logs.warn (fun m -> m "Closed while handling %S" effective_path); ()
-                    | `Written -> Lwt.wakeup wakeup ());
-                continue >>= fun () ->
-                loop (Optint.Int63.(add offset (of_int length)))
+                      Logs.warn (fun m -> m "Closed while handling %S" effective_path);
+                      Lwt.wakeup wakeup `Closed
+                    | `Written -> Lwt.wakeup wakeup `Continue);
+                continue >>= (function
+                    | `Closed -> H1.Body.Writer.close stream; Lwt.return_unit
+                    | `Continue -> loop (Optint.Int63.(add offset (of_int length))))
               | Error e ->
                 Logs.warn (fun m -> m "Error reading %s: %a"
                               effective_path
