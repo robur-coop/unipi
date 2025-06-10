@@ -5,7 +5,7 @@ open Mirage
 let packages = [
   package ~min:"3.7.0" "git-paf";
   package ~min:"3.7.0" "git";
-  package ~min:"0.0.5" "git-kv";
+  package ~min:"0.0.5" "git-kv" ~pin:"git+https://git.robur.coop/robur/git-kv.git#links";
   package "tls-mirage";
   package ~min:"1.3.0" "magic-mime";
   package "logs";

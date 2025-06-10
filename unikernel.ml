@@ -216,17 +216,21 @@ module Main
           Lwt.async @@ fun () ->
           let find path =
             let lookup path =
-              Git_kv.get store (Mirage_kv.Key.v path)
+              Git_kv.get_with_permissions store (Mirage_kv.Key.v path)
             in
             lookup path >>= function
             | Ok r -> Lwt.return_ok (path, r)
             | Error _ ->
               let effective_path = path ^ "/index.html" in
-              Lwt_result.map (fun r -> effective_path, r)
+              Lwt_result.map (fun (perm, data) -> effective_path, perm, data)
                 (lookup effective_path)
           in
           find path >>= function
-          | Ok (effective_path, data) ->
+          | Ok (effective_path, `Link, data) ->
+            (* XXX(reynir): we could and should sanitize [data] *)
+            let headers = [ "location", data ] in
+            H1.Response.create ~headers `Moved_permanently
+          | Ok (effective_path, _perm, data) ->
             let headers = [
               "content-type", mime_type effective_path ;
               "etag", Last_modified.etag () ;
