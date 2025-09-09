@@ -1,11 +1,9 @@
-(* mirage >= 4.9.0 & < 4.10.0 *)
+(* mirage >= 4.10.0 & < 4.11.0 *)
 
 open Mirage
 
 let packages = [
-  package ~min:"3.7.0" "git-paf";
-  package ~min:"3.7.0" "git";
-  package ~min:"0.0.5" "git-kv";
+  package ~min:"0.2.0" "git-kv";
   package "tls-mirage";
   package ~min:"1.3.0" "magic-mime";
   package "logs";
@@ -37,44 +35,37 @@ let management_stack =
     (generic_stackv4v6 ~group:"management" (netif ~group:"management" "management"))
     stack
 
-let name =
-  runtime_arg ~pos:__POS__
-    {|let doc = Cmdliner.Arg.info ~doc:"Name of the unikernel"
-        ~docs:Mirage_runtime.s_log [ "name" ]
-      in
-      Cmdliner.Arg.(value & opt string "robur.coop" doc)|}
-
 let monitoring =
   let monitor = Runtime_arg.(v (monitor None)) in
   let connect _ modname = function
-    | [ stack ; name ; monitor ] ->
+    | [ stack ; monitor ] ->
       code ~pos:__POS__
         "Lwt.return (match %s with\
          | None -> Logs.warn (fun m -> m \"no monitor specified, not outputting statistics\")\
-         | Some ip -> %s.create ip ~hostname:%s %s)"
-        monitor modname name stack
+         | Some ip -> %s.create ip ~hostname:(Mirage_runtime.name ()) %s)"
+        monitor modname stack
     | _ -> assert false
   in
   impl
     ~packages:[ package ~min:"0.0.6" "mirage-monitoring" ]
-    ~runtime_args:[ name ; monitor ]
+    ~runtime_args:[ monitor ]
     ~connect "Mirage_monitoring.Make"
     (stackv4v6 @-> job)
 
 let syslog =
   let syslog = Runtime_arg.(v (syslog None)) in
   let connect _ modname = function
-    | [ stack ; name ; syslog ] ->
+    | [ stack ; syslog ] ->
       code ~pos:__POS__
         "Lwt.return (match %s with\
          | None -> Logs.warn (fun m -> m \"no syslog specified, dumping on stdout\")\
-         | Some ip -> Logs.set_reporter (%s.create %s ip ~hostname:%s ()))"
-        syslog modname stack name
+         | Some ip -> Logs.set_reporter (%s.create %s ip ~hostname:(Mirage_runtime.name ()) ()))"
+        syslog modname stack
     | _ -> assert false
   in
   impl
     ~packages:[ package ~sublibs:["mirage"] ~min:"0.5.0" "logs-syslog" ]
-    ~runtime_args:[ name ; syslog ]
+    ~runtime_args:[ syslog ]
     ~connect "Logs_syslog_mirage.Udp"
     (stackv4v6 @-> job)
 
