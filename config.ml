@@ -32,7 +32,7 @@ let use_utcp =
   let doc = Key.Arg.info ~doc:"Use uTCP" [ "use-utcp" ] in
   Key.(create "use-utcp" Arg.(flag doc))
 
-let stack =
+let network_stack ?group name netif =
   let tcpv4v6_direct_conf id =
     let packages_v = Key.pure [ package "utcp" ~sublibs:[ "mirage" ] ] in
     let connect _ modname = function
@@ -46,24 +46,27 @@ let stack =
   let direct_tcpv4v6 id ip =
     tcpv4v6_direct_conf id $ ip
   in
-  let net ?group name netif =
-    let ethernet = ethif netif in
-    let arp = arp ethernet in
-    let i4 = create_ipv4 ?group ethernet arp in
-    let i6 = create_ipv6 ?group netif ethernet in
-    let i4i6 = create_ipv4v6 ?group i4 i6 in
-    let tcpv4v6 = direct_tcpv4v6 name i4i6 in
-    direct_stackv4v6 ?group ~tcp:tcpv4v6 netif ethernet arp i4 i6
-  in
-    if_impl
+  let ethernet = ethif netif in
+  let arp = arp ethernet in
+  let i4 = create_ipv4 ?group ethernet arp in
+  let i6 = create_ipv6 ?group netif ethernet in
+  let i4i6 = create_ipv4v6 ?group i4 i6 in
+  let tcpv4v6 = direct_tcpv4v6 name i4i6 in
+  direct_stackv4v6 ?group ~tcp:tcpv4v6 netif ethernet arp i4 i6
+
+let stack =
+  if_impl
     (Key.value use_utcp)
-    (net "service" default_network)
+    (network_stack "service" default_network)
     (generic_stackv4v6 default_network)
 
 let management_stack =
   if_impl
     (Key.value enable_monitoring)
-    (generic_stackv4v6 ~group:"management" (netif ~group:"management" "management"))
+    (if_impl
+       (Key.value use_utcp)
+       (network_stack ~group:"management" "management" (netif ~group:"management" "management"))
+       (generic_stackv4v6 ~group:"management" (netif ~group:"management" "management")))
     stack
 
 let monitoring =
