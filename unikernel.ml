@@ -187,7 +187,7 @@ module Main
     let dispatch mime_type store hookf hook_url _conn reqd =
       let request = H1.Reqd.request reqd in
       let path =
-        Uri.(pct_decode (path (of_string request.H1.Request.target)))
+        Uri.(pct_decode (path (make ~path:request.H1.Request.target ())))
       in
       Logs.info (fun f -> f "requested %s" path);
       if String.equal hook_url path then
