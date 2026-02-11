@@ -14,121 +14,38 @@ let packages = [
   package ~min:"0.0.6" "http-mirage-client";
   package "letsencrypt-mirage";
   package "ohex";
+
+  package "charrua" ~pin:"git+https://github.com/mirage/charrua.git#main";
+  package "charrua-client" ~sublibs:["mirage"] ~pin:"git+https://github.com/mirage/charrua.git#main";
+  package "dnsvizor-csr" ~pin:"git+https://github.com/robur-coop/dnsvizor.git#vendor-identifying";
+  package "dns-certify";
+  package "dns-mirage";
+
+  package "awa";
+  package "awa-mirage";
+  package "dns-client-mirage";
+  package "duration";
+  package "ethernet";
+  package "git-kv";
+  package "git-net";
+  package "happy-eyeballs-mirage";
+  package "mimic";
+  package "mimic-happy-eyeballs";
+  package "mirage-ptime";
+  package "mirage-sleep";
+  package "ohex";
+  package "utcp" ~sublibs:[ "mirage" ];
+  package "tcpip" ~sublibs:[ "ipv6"; "icmpv4"; "stack-direct"; "udp" ];
+
+  package "mirage-runtime";
+  package "mirage-runtime" ~sublibs:[ "network" ];
 ]
 
 let unipi =
-  main "Unikernel.Main" ~packages
-    (git_client @-> stackv4v6 @-> alpn_client @-> job)
-
-let enable_monitoring =
-  let doc = Key.Arg.info
-      ~doc:"Enable monitoring (syslog, metrics to influx, log level, statmemprof tracing)"
-      [ "enable-monitoring" ]
-  in
-  Key.(create "enable-monitoring" Arg.(flag doc))
-
-(* uTCP *)
-let use_utcp =
-  let doc = Key.Arg.info ~doc:"Use uTCP" [ "use-utcp" ] in
-  Key.(create "use-utcp" Arg.(flag doc))
-
-let network_stack ?group name netif =
-  let tcpv4v6_direct_conf id =
-    let packages_v = Key.pure [ package "utcp" ~sublibs:[ "mirage" ] ] in
-    let connect _ modname = function
-      | [ip] ->
-        code ~pos:__POS__ "Lwt.return (%s.connect %S %s)" modname id ip
-      | _ -> failwith "direct tcpv4v6"
-    in
-    impl ~packages_v ~connect "Utcp_mirage.Make"
-      (ipv4v6 @-> (tcp: 'a tcp typ))
-  in
-  let direct_tcpv4v6 id ip =
-    tcpv4v6_direct_conf id $ ip
-  in
-  let ethernet = ethif netif in
-  let arp = arp ethernet in
-  let i4 = create_ipv4 ?group ethernet arp in
-  let i6 = create_ipv6 ?group netif ethernet in
-  let i4i6 = create_ipv4v6 ?group i4 i6 in
-  let tcpv4v6 = direct_tcpv4v6 name i4i6 in
-  direct_stackv4v6 ?group ~tcp:tcpv4v6 netif ethernet arp i4 i6
-
-let stack =
-  if_impl
-    (Key.value use_utcp)
-    (network_stack "service" default_network)
-    (generic_stackv4v6 default_network)
-
-let management_stack =
-  if_impl
-    (Key.value enable_monitoring)
-    (if_impl
-       (Key.value use_utcp)
-       (network_stack ~group:"management" "management" (netif ~group:"management" "management"))
-       (generic_stackv4v6 ~group:"management" (netif ~group:"management" "management")))
-    stack
-
-let monitoring =
-  let monitor = Runtime_arg.(v (monitor None)) in
-  let connect _ modname = function
-    | [ stack ; monitor ] ->
-      code ~pos:__POS__
-        "Lwt.return (match %s with\
-         | None -> Logs.warn (fun m -> m \"no monitor specified, not outputting statistics\")\
-         | Some ip -> %s.create ip ~hostname:(Mirage_runtime.name ()) %s)"
-        monitor modname stack
-    | _ -> assert false
-  in
-  impl
-    ~packages:[ package ~min:"0.0.6" "mirage-monitoring" ]
-    ~runtime_args:[ monitor ]
-    ~connect "Mirage_monitoring.Make"
-    (stackv4v6 @-> job)
-
-let syslog =
-  let syslog = Runtime_arg.(v (syslog None)) in
-  let connect _ modname = function
-    | [ stack ; syslog ] ->
-      code ~pos:__POS__
-        "Lwt.return (match %s with\
-         | None -> Logs.warn (fun m -> m \"no syslog specified, dumping on stdout\")\
-         | Some ip -> Logs.set_reporter (%s.create %s ip ~hostname:(Mirage_runtime.name ()) ()))"
-        syslog modname stack
-    | _ -> assert false
-  in
-  impl
-    ~packages:[ package ~sublibs:["mirage"] ~min:"0.5.0" "logs-syslog" ]
-    ~runtime_args:[ syslog ]
-    ~connect "Logs_syslog_mirage.Udp"
-    (stackv4v6 @-> job)
-
-let optional_monitoring stack =
-  if_impl (Key.value enable_monitoring)
-    (monitoring $ stack)
-    noop
-
-let optional_syslog stack =
-  if_impl (Key.value enable_monitoring)
-    (syslog $ stack)
-    noop
-
-let he = generic_happy_eyeballs stack
-let dns = generic_dns_client stack he
-
-let alpn_client =
-  let dns = mimic_happy_eyeballs stack he dns in
-  paf_client (tcpv4v6_of_stackv4v6 stack) dns
-
-let git_client =
-  let git = mimic_happy_eyeballs stack he dns in
-  let tcp = tcpv4v6_of_stackv4v6 stack in
-  merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh tcp git) (git_http tcp git))
+  main "Unikernel'.Main" ~packages
+    (network @-> job)
 
 let () =
   register "unipi" [
-    optional_syslog management_stack ;
-    optional_monitoring management_stack ;
-    unipi $ git_client $ stack $ alpn_client
+    unipi $ default_network
   ]
