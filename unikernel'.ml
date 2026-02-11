@@ -195,7 +195,11 @@ module Main (Netif : Mirage_net.S) = struct
   let start netif =
     let open Lwt.Syntax in
     let privkey = X509.Private_key.generate `ED25519 in
-    let hostname = Option.get (Unikernel.K.hostname ()) in
+    let hostname =
+      match Unikernel.K.hostname () with
+      | None -> failwith "--hostname is required"
+      | Some hostname -> hostname
+    in
     let csr =
       let dn = [ X509.Distinguished_name.(Relative_distinguished_name.singleton (CN hostname)) ] in
       X509.Signing_request.create dn privkey
@@ -207,7 +211,7 @@ module Main (Netif : Mirage_net.S) = struct
       let v4_optional_network = K.v4_optional_network ()
       and v4_gateway_none = K.v4_gateway_none ()
       and ipv6_only = K.ipv6_only () in
-      let requests = Some Dhcp_wire.[ SUBNET_MASK; ROUTERS; DNS_SERVERS ] in
+      let requests = Some Dhcp_wire.[ SUBNET_MASK; ROUTERS; DNS_SERVERS; VI_VENDOR_INFO ] in
       let options = [
         Dhcp_wire.Vi_vendor_class [ 49836l, Dnsvizor_csr.encode csr ] ;
       ] in

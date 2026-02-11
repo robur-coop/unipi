@@ -15,8 +15,8 @@ let packages = [
   package "letsencrypt-mirage";
   package "ohex";
 
-  package "charrua" ~pin:"git+https://github.com/mirage/charrua.git#main";
-  package "charrua-client" ~sublibs:["mirage"] ~pin:"git+https://github.com/mirage/charrua.git#main";
+  package "charrua" ~pin:"git+https://github.com/mirage/charrua.git#vendor-identifying";
+  package "charrua-client" ~sublibs:["mirage"] ~pin:"git+https://github.com/mirage/charrua.git#vendor-identifying";
   package "dnsvizor-csr" ~pin:"git+https://github.com/robur-coop/dnsvizor.git#vendor-identifying";
   package "dns-certify";
   package "dns-mirage";
