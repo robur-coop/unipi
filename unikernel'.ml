@@ -101,11 +101,12 @@ module Main (Netif : Mirage_net.S) = struct
 
   let is_certificate t =
     let module Tlsa = Dns.Tlsa in
-    tlsa_is Tlsa.Domain_issued_certificate Tlsa.Private Tlsa.No_hash t
+    tlsa_is Tlsa.Domain_issued_certificate Tlsa.Full_certificate Tlsa.No_hash t
 
   let is_ca_certificate t =
     let module Tlsa = Dns.Tlsa in
     tlsa_is Tlsa.CA_constraint Tlsa.Full_certificate Tlsa.No_hash t
+
 
   (* may be better suited in X509? *)
   let cert_matches_csr ?until now csr cert =
