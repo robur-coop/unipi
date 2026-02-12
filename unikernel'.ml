@@ -193,7 +193,7 @@ module Main (Netif : Mirage_net.S) = struct
 
   let start netif =
     let open Lwt.Syntax in
-    let privkey = X509.Private_key.generate `ED25519 in
+    let privkey = X509.Private_key.generate `P256 in
     let hostname =
       match Unikernel.K.hostname () with
       | None -> failwith "--hostname is required"
