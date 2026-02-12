@@ -134,6 +134,36 @@ module Main (Netif : Mirage_net.S) = struct
     end else
       true
 
+  let query_certificate csr dns_client hostname now =
+    let open Lwt.Syntax in
+    let+ r = Dns_client.get_resource_record dns_client Dns.Rr_map.Tlsa hostname in
+    match r with
+    | Error (`No_data _ | `No_domain _) -> Error `No_tlsa
+    | Error `Msg _ as e -> e
+    | Ok (_ttl, tlsas) ->
+      let certificates, ca_certificates =
+        Dns.Rr_map.Tlsa_set.fold (fun tlsa (certs, cacerts as acc) ->
+            if is_certificate tlsa || is_ca_certificate tlsa then
+              match X509.Certificate.decode_der tlsa.data with
+              | Error `Msg msg ->
+                Logs.warn (fun m -> m "couldn't decode tlsa record %a: %s (%a)"
+                              Domain_name.pp hostname msg
+                              Ohex.pp tlsa.data);
+                acc
+              | Ok cert ->
+                if is_certificate tlsa then (cert :: certs, cacerts)
+                else if is_ca_certificate tlsa then (certs, cert :: cacerts)
+                else acc
+            else acc)
+          tlsas ([], [])
+      in
+      match List.find_opt (cert_matches_csr now csr) certificates with
+      | None ->
+        Error `No_tlsa
+      | Some server_cert ->
+        match List.rev (X509.Validation.build_paths server_cert ca_certificates) with
+        | (_server :: chain) :: _ -> Ok (server_cert, chain)
+        | _ -> Ok (server_cert, []) (* build_paths always returns the server_cert *)
 
   let query_certificate csr dns_client hostname =
     let open Lwt.Syntax in
@@ -142,35 +172,14 @@ module Main (Netif : Mirage_net.S) = struct
       if retry = 0 then
         Lwt.return (Error (`Msg "too many retries, giving up"))
       else
-        let* r = Dns_client.get_resource_record dns_client Dns.Rr_map.Tlsa hostname in
+        let* r = query_certificate csr dns_client hostname now in
         match r with
-        | Error _ ->
+        | Ok _ as ok -> Lwt.return ok
+        | Error `No_tlsa ->
           let* () = Mirage_sleep.ns (Duration.of_sec 2) in
           wait_for_cert ~retry:(pred retry) ()
-        | Ok (_ttl, tlsas) ->
-          Lwt.return @@
-          let certificates, ca_certificates =
-            Dns.Rr_map.Tlsa_set.fold (fun tlsa (certs, cacerts as acc) ->
-                if is_certificate tlsa || is_ca_certificate tlsa then
-                  match X509.Certificate.decode_der tlsa.data with
-                  | Error `Msg msg ->
-                    Logs.warn (fun m -> m "couldn't decode tlsa record %a: %s (%a)"
-                                  Domain_name.pp hostname msg
-                                  Ohex.pp tlsa.data);
-                    acc
-                  | Ok cert ->
-                    if is_certificate tlsa then (cert :: certs, cacerts)
-                    else if is_ca_certificate tlsa then (certs, cert :: cacerts)
-                    else acc
-                else acc)
-              tlsas ([], [])
-          in
-          match List.find_opt (cert_matches_csr now csr) certificates with
-          | None -> Error `No_tlsa
-          | Some server_cert ->
-            match List.rev (X509.Validation.build_paths server_cert ca_certificates) with
-            | (_server :: chain) :: _ -> Ok (server_cert, chain)
-            | _ -> Ok (server_cert, []) (* build_paths always returns the server_cert *)
+        | Error `Msg _ as e ->
+          Lwt.return e
     in
     wait_for_cert ()
 
