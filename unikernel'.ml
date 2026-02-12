@@ -91,6 +91,7 @@ module Main (Netif : Mirage_net.S) = struct
   module Git_net_ssh = Git_net.SSH.Make(Tcpip)(Mimic_happy_eyeballs)
   module Git_net_http = Git_net.HTTP.Make(Tcpip)(Mimic_happy_eyeballs)
 
+  module Dns_mirage = Dns_mirage.Make(Stack)
   module Start = Unikernel.Main(struct end)(Stack)
 
   let tlsa_is usage sel typ t =
@@ -135,70 +136,112 @@ module Main (Netif : Mirage_net.S) = struct
     end else
       true
 
-  let query_certificate csr dns_client hostname now =
-    let open Lwt.Syntax in
-    let+ r = Dns_client.get_resource_record dns_client Dns.Rr_map.Tlsa hostname in
-    match r with
-    | Error (`No_data _ | `No_domain _) -> Error `No_tlsa
-    | Error `Msg _ as e -> e
-    | Ok (_ttl, tlsas) ->
-      let certificates, ca_certificates =
-        Dns.Rr_map.Tlsa_set.fold (fun tlsa (certs, cacerts as acc) ->
-            if is_certificate tlsa || is_ca_certificate tlsa then
-              match X509.Certificate.decode_der tlsa.data with
-              | Error `Msg msg ->
-                Logs.warn (fun m -> m "couldn't decode tlsa record %a: %s (%a)"
-                              Domain_name.pp hostname msg
-                              Ohex.pp tlsa.data);
-                acc
-              | Ok cert ->
-                if is_certificate tlsa then (cert :: certs, cacerts)
-                else if is_ca_certificate tlsa then (certs, cert :: cacerts)
-                else acc
-            else acc)
-          tlsas ([], [])
-      in
-      match List.find_opt (cert_matches_csr now csr) certificates with
-      | None ->
-        Error `No_tlsa
-      | Some server_cert ->
-        match List.rev (X509.Validation.build_paths server_cert ca_certificates) with
-        | (_server :: chain) :: _ -> Ok (server_cert, chain)
-        | _ -> Ok (server_cert, []) (* build_paths always returns the server_cert *)
+  let tlsas_to_certchain host now csr tlsas =
+    let certificates, ca_certificates =
+      Dns.Rr_map.Tlsa_set.fold (fun tlsa (certs, cacerts as acc) ->
+          if is_certificate tlsa || is_ca_certificate tlsa then
+            match X509.Certificate.decode_der tlsa.Dns.Tlsa.data with
+            | Error (`Msg msg) ->
+              Logs.warn (fun m -> m "couldn't decode tlsa record %a: %s (%a)"
+                            Domain_name.pp host msg
+                            Ohex.pp tlsa.Dns.Tlsa.data);
+              acc
+            | Ok cert ->
+              match is_certificate tlsa, is_ca_certificate tlsa with
+              | true, _ -> (cert :: certs, cacerts)
+              | _, true -> (certs, cert :: cacerts)
+              | _ -> acc
+          else acc)
+        tlsas ([], [])
+    in
+    match List.find_opt (cert_matches_csr now csr) certificates with
+    | None -> Error `No_tlsa
+    | Some server_cert ->
+      match List.rev (X509.Validation.build_paths server_cert ca_certificates) with
+      | (_server :: chain) :: _ -> Ok (server_cert, chain)
+      | _ -> Ok (server_cert, []) (* build_paths always returns the server_cert *)
 
-  let query_certificate csr dns_client hostname =
+  let query rng now host csr =
+    let open Dns in
+    let header =
+      let id = Randomconv.int16 rng in
+      (id, Packet.Flags.empty)
+    and question = Packet.Question.create host Tlsa
+    in
+    let request = Packet.create header question `Query in
+    let out, _ = Packet.encode `Tcp request
+    and react data =
+      match Packet.decode data with
+      | Error e -> Error (`Decode e)
+      | Ok reply ->
+        match Packet.reply_matches_request ~request reply with
+        | Ok (`Answer (answer, _)) ->
+          begin match Name_rr_map.find host Tlsa answer with
+            | None -> Error `No_tlsa
+            | Some (_, tlsas) -> tlsas_to_certchain host now csr tlsas
+          end
+        | Ok (`Rcode_error (Rcode.NXDomain, Opcode.Query, _)) -> Error `No_tlsa
+        | Ok reply -> Error (`Unexpected_reply reply)
+        | Error e -> Error (`Bad_reply (e, reply))
+    in
+    Ok (out, react)
+
+
+  let query_certificate flow name csr =
+    let open Lwt.Infix in
+    match query Mirage_crypto_rng.generate (Mirage_ptime.now ()) name csr with
+    | Error e -> Lwt.return (Error e)
+    | Ok (out, cb) ->
+      Dns_mirage.send_tcp (Dns_mirage.flow flow) (Cstruct.of_string out) >>= function
+      | Error () -> Lwt.return (Error (`Msg "couldn't send tcp"))
+      | Ok () ->
+        Dns_mirage.read_tcp flow >|= function
+        | Error () -> Error (`Msg "error while reading answer")
+        | Ok data -> match cb (Cstruct.to_string data) with
+          | Error e -> Error e
+          | Ok cert -> Ok cert
+
+  let query_certificate csr stack (ip, domain) =
     let open Lwt.Syntax in
-    let now = Mirage_ptime.now () in
-    let rec wait_for_cert ?(retry = 5000) () =
+    let rec wait_for_cert ?(retry = 30) flow =
       if retry = 0 then
         Lwt.return (Error (`Msg "too many retries, giving up"))
       else
-        let* r = query_certificate csr dns_client hostname now in
-        match r with
-        | Ok _ as ok -> Lwt.return ok
-        | Error `No_tlsa ->
-          let* () = Mirage_sleep.ns (Duration.of_sec 2) in
-          wait_for_cert ~retry:(pred retry) ()
-        | Error `Msg _ as e ->
-          Lwt.return e
+          let* r = query_certificate flow domain csr in
+          match r with
+          | Ok (cert, _) as ok ->
+            Logs.debug (fun m -> m "Received cert: %a" X509.Certificate.pp cert);
+            Lwt.return ok
+          | Error (#Dns_certify.q_err) ->
+            let* () = Mirage_sleep.ns (Duration.of_sec 2) in
+            wait_for_cert ~retry:(pred retry) flow
+          | Error `Msg _ as e ->
+            Lwt.return e
     in
-    wait_for_cert ()
+    let* r = Stack.TCP.create_connection (Stack.tcp stack) (ip, 53) in
+    match r with
+    | Error e ->
+      Lwt.return_error (`Msg (Fmt.str "error while connecting to nameserver: %a"
+                                Stack.TCP.pp_error e))
+    | Ok flow ->
+      Lwt.finalize
+        (fun () -> wait_for_cert (Dns_mirage.of_flow flow))
+        (fun () -> Stack.TCP.close flow)
 
   let get_certificate privkey csr lease dns_client =
     match lease with
-    | None -> assert false (* FIXME *)
+    | None -> Lwt.return_error `No_lease
     | Some lease ->
       let vivso = Dhcp_wire.collect_vi_vendor_info lease in
       match
         Option.bind (List.assoc_opt 49836l vivso)
           (List.assoc_opt 1)
       with
-      | None -> assert false (* FIXME *)
-      | Some domain ->
-        (* FIXME *)
-        let domain = Domain_name.of_string_exn domain in
+      | None -> Lwt.return_error `No_mirage_certify
+      | Some data ->
         let open Lwt_result.Syntax in
-        let+ cert, certs = query_certificate csr dns_client domain in
+        let* ip, domain = Lwt.return (Dnsvizor_csr.decode_src data) in
+        let+ cert, certs = query_certificate csr dns_client (ip, domain) in
         `Single (cert :: certs, privkey)
 
   let start netif =
@@ -293,13 +336,19 @@ module Main (Netif : Mirage_net.S) = struct
       Git_net_http.with_optional_tls_config_and_headers ?headers ?authenticator t
     in
     let mimic_merge = Mimic.merge git_net_tcp (Mimic.merge git_net_ssh git_net_http) in
-    let* cert = get_certificate privkey csr lease dns_client in
+    let* cert = get_certificate privkey csr lease stack in
     match cert with
     | Error `Msg e ->
       Logs.err (fun m -> m "Issue getting certificate: %s" e);
       exit 9
     | Error `No_tlsa ->
       Logs.err (fun m -> m "Issue getting certificate: no TLSA");
+      exit 9
+    | Error `No_lease ->
+      Logs.err (fun m -> m "No lease");
+      exit 9
+    | Error `No_mirage_certify ->
+      Logs.err (fun m -> m "No certificate from DHCP server");
       exit 9
     | Ok cert ->
       Start.start mimic_merge stack cert
