@@ -187,7 +187,6 @@ module Main (Netif : Mirage_net.S) = struct
       | Some domain ->
         (* FIXME *)
         let domain = Domain_name.of_string_exn domain in
-        let domain = Domain_name.host_exn domain in
         let open Lwt_result.Syntax in
         let+ cert, certs = query_certificate csr dns_client domain in
         `Single (cert :: certs, privkey)
