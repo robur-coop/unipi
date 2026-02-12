@@ -168,7 +168,7 @@ module Main (Netif : Mirage_net.S) = struct
   let query_certificate csr dns_client hostname =
     let open Lwt.Syntax in
     let now = Mirage_ptime.now () in
-    let rec wait_for_cert ?(retry = 10) () =
+    let rec wait_for_cert ?(retry = 5000) () =
       if retry = 0 then
         Lwt.return (Error (`Msg "too many retries, giving up"))
       else
