@@ -211,8 +211,11 @@ module Main (Netif : Mirage_net.S) = struct
       let v4_optional_network = K.v4_optional_network ()
       and v4_gateway_none = K.v4_gateway_none ()
       and ipv6_only = K.ipv6_only () in
-      let requests = Some Dhcp_wire.[ SUBNET_MASK; ROUTERS; DNS_SERVERS; VI_VENDOR_INFO ] in
+      let requests = Some Dhcp_wire.[
+          SUBNET_MASK; ROUTERS; DNS_SERVERS; VI_VENDOR_INFO; CLIENT_FQDN ]
+      in
       let options = [
+        Dhcp_wire.Client_fqdn ([ `Server_A ], Domain_name.of_string_exn hostname);
         Dhcp_wire.Vi_vendor_class [ 49836l, Dnsvizor_csr.encode csr ] ;
       ] in
       Dhcp.connect ?requests ~options ~no_init:ipv6_only ?cidr:v4_optional_network
