@@ -268,7 +268,7 @@ module Main (Netif : Mirage_net.S) = struct
       in
       let options = [
         Dhcp_wire.Client_fqdn ([ `Server_A ], Domain_name.of_string_exn hostname);
-        Dhcp_wire.Vi_vendor_class [ 49836l, Dnsvizor_csr.encode csr ] ;
+        Dhcp_wire.Vi_vendor_class [ 49836l, [ Dnsvizor_csr.encode csr ] ];
       ] in
       Dhcp.connect ?requests ~options ~no_init:ipv6_only ?cidr:v4_optional_network
         ?gateway:v4_gateway_none netif ethernet arp
