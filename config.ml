@@ -27,7 +27,12 @@ let enable_monitoring =
   in
   Key.(create "enable-monitoring" Arg.(flag doc))
 
-let stack = generic_stackv4v6 default_network
+let dhcp_requests = make_dhcp_requests ()
+
+let stack, lease =
+  generic_stackv4v6_with_lease ~dhcp_requests default_network
+
+let dhcp = dhcp_requests, lease
 
 let management_stack =
   if_impl
@@ -80,7 +85,7 @@ let optional_syslog stack =
     noop
 
 let he = generic_happy_eyeballs stack
-let dns = generic_dns_client stack he
+let dns = generic_dns_client ~dhcp stack he
 
 let alpn_client =
   let dns = mimic_happy_eyeballs stack he dns in
