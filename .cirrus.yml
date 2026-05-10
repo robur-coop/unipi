@@ -3,8 +3,8 @@ freebsd_instance:
 
 freebsd_task:
   pkg_install_script: pkg install -y ocaml-opam gmake bash
-  ocaml_script: opam init -a --comp=4.14.2
-  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.10.0"
+  ocaml_script: opam init -a --comp=4.14.3
+  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.11.0"
   configure_script: eval `opam env` && mirage configure -t hvt
   depend_script: eval `opam env` && gmake depend
   build_script: eval `opam env` && gmake build
@@ -13,9 +13,9 @@ freebsd_task:
 
 freebsd_monitoring_task:
   pkg_install_script: pkg install -y ocaml-opam gmake bash
-  ocaml_script: opam init -a --comp=4.14.2
-  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.10.0"
-  configure_script: eval `opam env` && mirage configure -t hvt --enable-monitoring
+  ocaml_script: opam init -a --comp=4.14.3
+  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.11.0"
+  configure_script: eval `opam env` && mirage configure -t hvt --enable-monitoring --utcp --management-utcp
   depend_script: eval `opam env` && gmake depend
   build_script: eval `opam env` && gmake build
   unipi_artifacts:
