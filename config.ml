@@ -29,7 +29,7 @@ let enable_monitoring =
   in
   Key.(create "enable-monitoring" Arg.(flag doc))
 
-let stack = generic_stackv4v6 default_network
+let stack = generic_stackv4v6 ~ipv4_network:(Ipaddr.V4.Prefix.of_string_exn "192.168.254.10/24") ~ipv4_gateway:(Ipaddr.V4.of_string_exn "192.168.254.1") default_network
 
 let management_stack =
   if_impl
