@@ -49,7 +49,6 @@ module Main
   (KEYS: Mirage_kv.RO) = struct
 
   module Paf = Paf_mirage.Make(Stack.TCP)
-  module LE = LE.Make(Stack)
 
   module X509KV = Tls_mirage.X509(KEYS)
 
