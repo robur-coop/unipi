@@ -1,21 +1,57 @@
 open Lwt.Infix
 
-let argument_error = 64
+module K = struct
+  open Cmdliner
+
+  let default_mime_type =
+    let doc = Arg.info ~doc:"Default mime-type to serve." ["default-mime-type"] in
+    Mirage_runtime.register_arg
+      Arg.(value & opt string "application/octet-stream" doc)
+
+  let mime_type =
+    let doc = Arg.info ~doc:"Overwrite mime-type for a path." ["mime-type"] in
+    Mirage_runtime.register_arg
+      Arg.(value & opt_all (pair ~sep:':' string string) [] doc)
+
+  let hook =
+    let doc = Arg.info ~doc:"Webhook for pulling the repository." ["hook"] in
+    Mirage_runtime.register_arg Arg.(value & opt string "/hook" doc)
+
+  let remote =
+    let doc = Arg.info
+        ~doc:"Remote repository url, use suffix #foo to specify a branch 'foo': \
+              https://github.com/hannesm/unipi.git#gh-pages"
+        ["remote"]
+    in
+    Mirage_runtime.register_arg Arg.(required & opt (some string) None doc)
+
+  let port =
+    let doc = Arg.info ~doc:"HTTP listen port." ["port"] in
+    Mirage_runtime.register_arg Arg.(value & opt int 80 doc)
+
+  let https_port =
+    let doc = Arg.info ~doc:"HTTPS listen port." ["https-port"] in
+    Mirage_runtime.register_arg Arg.(value & opt int 443 doc)
+
+  let tls =
+    let doc = Arg.info ~doc:"Enable TLS." ["tls"] in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
+
+  let hostname =
+    let doc = Arg.info ~doc:"Host name (used for let's encrypt and redirects)." ["hostname"] in
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
+end
 
 module Main
   (_ : sig end)
-  (P: Mirage_clock.PCLOCK)
-  (Time: Mirage_time.S)
   (Stack: Tcpip.Stack.V4V6)
   (HTTP: Http_mirage_client.S)
   (KEYS: Mirage_kv.RO) = struct
 
-  module Nss = Ca_certs_nss.Make(P)
   module Paf = Paf_mirage.Make(Stack.TCP)
-  module LE = LE.Make(Time)(Stack)
-  module Store = Git_kv.Make(P)
+  module LE = LE.Make(Stack)
 
-  module X509KV = Tls_mirage.X509(KEYS)(Pclock)
+  module X509KV = Tls_mirage.X509(KEYS)
 
   let tls_from_kv kv =
     Lwt.catch
@@ -47,16 +83,16 @@ module Main
 
     (* cache control: all resources use last-modified + etag of last commit *)
     let retrieve_last_commit store =
-      Store.digest store Mirage_kv.Key.empty >>= fun last_hash ->
-      Store.last_modified store Mirage_kv.Key.empty >|= fun r ->
-      let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Ptime.v (Pclock.now_d_ps ())) r in
+      Git_kv.digest store Mirage_kv.Key.empty >>= fun last_hash ->
+      Git_kv.last_modified store Mirage_kv.Key.empty >|= fun r ->
+      let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Mirage_ptime.now ()) r in
       let last_date = ptime_to_http_date v in
-      last := (last_date, Result.get_ok last_hash)
+      last := (last_date, Ohex.encode (Result.get_ok last_hash))
 
     let not_modified request =
-      match Httpaf.Headers.get request.Httpaf.Request.headers "if-modified-since" with
+      match H1.Headers.get request.H1.Request.headers "if-modified-since" with
       | Some ts -> String.equal ts (fst !last)
-      | None -> match Httpaf.Headers.get request.Httpaf.Request.headers "if-none-match" with
+      | None -> match H1.Headers.get request.H1.Request.headers "if-none-match" with
         | Some etags -> List.mem (snd !last) (Astring.String.cuts ~sep:"," etags)
         | None -> false
 
@@ -82,8 +118,8 @@ module Main
          in
          Metrics.uint "total" total :: data)
     in
-    let f { Httpaf.Response.status ; _ } =
-      let code = Httpaf.Status.to_code status in
+    let f { H1.Response.status ; _ } =
+      let code = H1.Status.to_code status in
       Printf.sprintf "%dxx" (code / 100)
     in
     let src =
@@ -96,24 +132,23 @@ module Main
     (fun r -> Metrics.add src (fun x -> x) (fun d -> d r))
 
   let respond_with_empty reqd resp =
-    let hdr = Httpaf.Headers.add_unless_exists resp.Httpaf.Response.headers
+    let hdr = H1.Headers.add_unless_exists resp.H1.Response.headers
       "connection" "close" in
-    let resp = { resp with Httpaf.Response.headers= hdr } in
+    let resp = { resp with H1.Response.headers= hdr } in
     http_status resp;
-    Httpaf.Reqd.respond_with_string reqd resp ""
+    H1.Reqd.respond_with_string reqd resp ""
 
   module Dispatch = struct
 
     module M = Map.Make(String)
 
-    let mime_type =
+    let mime_type_fn mime_type default_mime_type =
       let overwrite =
         lazy (
           List.fold_left (fun acc (k, v) ->
               M.add k v acc)
-            M.empty (Key_gen.mime_type ()))
-      and default =
-        lazy (Key_gen.default_mime_type ())
+            M.empty mime_type)
+      and default = lazy default_mime_type
       in
       fun path ->
         let mime_type =
@@ -130,39 +165,39 @@ module Main
           content_type ^ "; charset=utf-8" (* default to utf-8 *)
         | content_type -> content_type
 
-    let dispatch store hookf hook_url _conn reqd =
-      let request = Httpaf.Reqd.request reqd in
+    let dispatch mime_type store hookf hook_url _conn reqd =
+      let request = H1.Reqd.request reqd in
       let path =
-        Uri.(pct_decode (path (of_string request.Httpaf.Request.target)))
+        Uri.(pct_decode (path (make ~path:request.H1.Request.target ())))
       in
       Logs.info (fun f -> f "requested %s" path);
       if String.equal hook_url path then
         begin
           Lwt.async @@ fun () -> hookf () >>= function
           | Ok data ->
-            let headers = Httpaf.Headers.of_list
+            let headers = H1.Headers.of_list
               [ "content-length", string_of_int (String.length data) ] in
-            let resp = Httpaf.Response.create ~headers `OK in
+            let resp = H1.Response.create ~headers `OK in
             http_status resp;
-            Httpaf.Reqd.respond_with_string reqd resp data ;
+            H1.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error (`Msg msg) ->
-            let headers = Httpaf.Headers.of_list
+            let headers = H1.Headers.of_list
               [ "content-length", string_of_int (String.length msg) ] in
-            let resp = Httpaf.Response.create ~headers `Internal_server_error in
+            let resp = H1.Response.create ~headers `Internal_server_error in
             http_status resp;
-            Httpaf.Reqd.respond_with_string reqd resp msg ;
+            H1.Reqd.respond_with_string reqd resp msg ;
             Lwt.return_unit
         end
       else
         if Last_modified.not_modified request then
-          let resp = Httpaf.Response.create `Not_modified in
+          let resp = H1.Response.create `Not_modified in
           respond_with_empty reqd resp
         else
           Lwt.async @@ fun () ->
           let find path =
             let lookup path =
-              Store.get store (Mirage_kv.Key.v path)
+              Git_kv.get store (Mirage_kv.Key.v path)
             in
             lookup path >>= function
             | Ok r -> Lwt.return_ok (path, r)
@@ -179,30 +214,30 @@ module Main
               "last-modified", Last_modified.last_modified () ;
               "content-length", string_of_int (String.length data) ;
             ] in
-            let headers = Httpaf.Headers.of_list headers in
-            let resp = Httpaf.Response.create ~headers `OK in
+            let headers = H1.Headers.of_list headers in
+            let resp = H1.Response.create ~headers `OK in
             http_status resp;
-            Httpaf.Reqd.respond_with_string reqd resp data ;
+            H1.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error _ ->
             let data = "Resource not found " ^ path in
-            let headers = Httpaf.Headers.of_list
+            let headers = H1.Headers.of_list
                 [ "content-length", string_of_int (String.length data) ] in
-            let resp = Httpaf.Response.create ~headers `Not_found in
+            let resp = H1.Response.create ~headers `Not_found in
             http_status resp;
-            Httpaf.Reqd.respond_with_string reqd resp data ;
+            H1.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
 
-    let redirect port _ _ reqd =
-      let request = Httpaf.Reqd.request reqd in
+    let redirect ~hostname port _ _ reqd =
+      let request = H1.Reqd.request reqd in
       let response =
         Option.fold
           ~none:(
             Logs.info (fun f -> f "redirect: no host header in request");
-            Httpaf.Response.create `Bad_request)
+            H1.Response.create `Bad_request)
           ~some:(fun host ->
               let port = if port = 443 then None else Some port in
-              let uri = Uri.of_string request.Httpaf.Request.target in
+              let uri = Uri.of_string request.H1.Request.target in
               let new_uri =
                 let uri = Uri.with_host uri (Some host) in
                 let uri = Uri.with_scheme uri (Some "https") in
@@ -211,34 +246,36 @@ module Main
               Logs.info (fun f -> f "[%s] -> [%s]"
                             (Uri.to_string uri) (Uri.to_string new_uri));
               let headers =
-                Httpaf.Headers.of_list
+                H1.Headers.of_list
                   [ "location", (Uri.to_string new_uri) ] in
-              Httpaf.Response.create ~headers `Moved_permanently)
+              H1.Response.create ~headers `Moved_permanently)
           (Option.fold
-             ~none:(Httpaf.Headers.get request.Httpaf.Request.headers "host")
+             ~none:(H1.Headers.get request.H1.Request.headers "host")
              ~some:(fun a -> Some a)
-             (Key_gen.hostname ()))
+             hostname)
       in
       respond_with_empty reqd response
   end
 
   let pp_error ppf = function
-    | #Httpaf.Status.t as code -> Httpaf.Status.pp_hum ppf code
+    | #H1.Status.t as code -> H1.Status.pp_hum ppf code
     | `Exn exn -> Fmt.pf ppf "exception %s" (Printexc.to_string exn)
 
   let error_handler _dst ?request err _ =
     let resp_code = match err with
-      | #Httpaf.Status.t as code -> code
+      | #H1.Status.t as code -> code
       | `Exn _ -> `Internal_server_error
     in
-    http_status (Httpaf.Response.create resp_code);
+    http_status (H1.Response.create resp_code);
     Logs.err (fun m -> m "error %a while processing request %a"
                  pp_error err
-                 Fmt.(option ~none:(any "unknown") Httpaf.Request.pp_hum) request)
+                 Fmt.(option ~none:(any "unknown") H1.Request.pp_hum) request)
 
   let ( >>? ) = Lwt_result.bind
 
-  let request_handler store _flow : _ -> Httpaf.Server_connection.request_handler =
+  let request_handler mime_type hook store _flow
+      : _ -> H1.Server_connection.request_handler
+    =
     let hookf () =
       Git_kv.pull store >>= function
       | Ok [] -> Lwt.return_ok "pulled, no changes"
@@ -247,38 +284,40 @@ module Main
         Lwt.return_ok ("pulled " ^ Last_modified.etag ())
       | Error _ as e -> Lwt.return e
     in
-    Dispatch.dispatch store hookf (Key_gen.hook ())
+    Dispatch.dispatch mime_type store hookf hook
 
   let key_type kt =
     match X509.Key_type.of_string kt with
     | Ok kt -> kt
     | Error `Msg msg ->
       Logs.err (fun m -> m "cannot decode key type %s: %s" kt msg);
-      exit argument_error
+      exit Mirage_runtime.argument_error
 
   let try_pull git_ctx =
-    let remote = Key_gen.remote () in
+    let remote = K.remote () in
     let rec go attempt =
       Lwt.catch
         (fun () -> Git_kv.connect git_ctx remote)
         (function
           | Invalid_argument _ when attempt > 0 ->
             Logs.info (fun m -> m "failed to fetch repository, trying again in a second");
-            Time.sleep_ns (Duration.of_sec 1) >>= fun () ->
+            Mirage_sleep.ns (Duration.of_sec 1) >>= fun () ->
             go (attempt - 1)
           | e -> raise e)
     in
     go 5
 
-  let start git_ctx () () stackv4v6 http_client keys =
+  let start git_ctx stackv4v6 http_client keys =
     try_pull git_ctx >>= fun store ->
+    let mime_type = Dispatch.mime_type_fn (K.mime_type ()) (K.default_mime_type ()) in
+    Git_kv.connect git_ctx (K.remote ()) >>= fun store ->
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
-      (function Ok () -> Lwt.return_unit | Error (`Msg msg) -> Lwt.fail_with msg)
+      (function Ok () -> () | Error (`Msg msg) -> failwith msg)
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
-       if Key_gen.tls () then begin
-         let now = Ptime.v (P.now_d_ps ()) in
+       if K.tls () then begin
+         let now = Mirage_ptime.now () in
          begin
            let open Lwt.Infix in
            (* let's consider only certificates that are valid for at least one more day! *)
@@ -300,32 +339,30 @@ module Main
            | Error () ->
              Error (`Msg "error while getting certificates")
          end >>? fun certificates ->
-             let tls = Tls.Config.server ~certificates () in
-             Paf.init ~port:(Key_gen.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
-             let service =
-               Paf.https_service ~tls ~error_handler (request_handler store)
-             in
+             let tls = Result.get_ok (Tls.Config.server ~certificates ()) in
+             Paf.init ~port:(K.https_port ()) (Stack.tcp stackv4v6) >>= fun t ->
+             let request_handler = request_handler mime_type (K.hook ()) store in
+             let service = Paf.https_service ~tls ~error_handler request_handler in
              let stop = Lwt_switch.create () in
              let `Initialized th0 = Paf.serve ~stop service t in
              Logs.info (fun m ->
-                 m "listening on %d/HTTPS" (Key_gen.port ()));
-             Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+                 m "listening on %d/HTTPS" (K.port ()));
+             Paf.init ~port:(K.port ()) (Stack.tcp stackv4v6) >>= fun t ->
              let service =
-               let to_port = (Key_gen.https_port ()) in
-               Paf.http_service ~error_handler (Dispatch.redirect to_port)
+               let to_port = (K.https_port ()) in
+               Paf.http_service ~error_handler (Dispatch.redirect ~hostname:(K.hostname ()) to_port)
              in
              let `Initialized th1 = Paf.serve ~stop service t in
              Logs.info (fun f -> f "listening on %d/HTTP, redirecting to %d/HTTPS"
-                           (Key_gen.port ()) (Key_gen.https_port ()));
+                           (K.port ()) (K.https_port ()));
              Lwt.join [ th0 ; th1 ] >|= fun () ->
              Ok ()
        end else begin
-         Paf.init ~port:(Key_gen.port ()) (Stack.tcp stackv4v6) >>= fun t ->
-         let service =
-           Paf.http_service ~error_handler (request_handler store)
-         in
+         Paf.init ~port:(K.port ()) (Stack.tcp stackv4v6) >>= fun t ->
+         let request_handler = request_handler mime_type (K.hook ()) store in
+         let service = Paf.http_service ~error_handler request_handler in
          let `Initialized th = Paf.serve service t in
-         Logs.info (fun f -> f "listening on %d/HTTP" (Key_gen.port ()));
-         (th >|= fun () -> Ok ())
+         Logs.info (fun f -> f "listening on %d/HTTP" (K.port ()));
+         (th >|= fun v -> Ok v)
        end)
 end

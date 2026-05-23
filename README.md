@@ -5,7 +5,7 @@ HTTP and HTTPS. It embeds (optional) let's encrypt provisioning.
 
 A webhook is provided to update the internal state of the git repository. An
 example deployment is [robur.coop](https://robur.coop), which serves the
-[robur website](https://git.robur.io/robur/homepage-data) (using the
+[robur website](https://git.robur.coop/robur/homepage-data) (using the
 pages branch).
 
 Some HTTP headers are added: "content-type", which value is looked up of the
@@ -48,18 +48,18 @@ argument.
 
 To install this unikernel from source, you need to have
 [opam](https://opam.ocaml.org) (>= 2.1.0) and
-[ocaml](https://ocaml.org) (>= 4.08.0) installed. Also,
-[mirage](https://mirageos.org) is required (>= 4.3.4). Please follow the
+[ocaml](https://ocaml.org) (>= 4.13.0) installed. Also,
+[mirage](https://mirageos.org) is required (>= 4.10.0). Please follow the
 [installation instructions](https://mirageos.org/wiki/install).
 
 The following steps will clone this git repository and compile the unikernel:
 
 ```bash
-$ git clone https://github.com/roburio/unipi.git
+$ git clone https://github.com/robur-coop/unipi.git
 $ cd unipi
 $ mirage configure -t <your-favourite-target> #i.e. hvt, spt, xen
 $ make depend
-$ mirage build
+$ make build
 ```
 
 ## Installing as binary
