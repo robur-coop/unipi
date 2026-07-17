@@ -9,7 +9,7 @@ let packages = [
   package "logs";
   package "awa";
   package "awa-mirage";
-  package ~min:"0.3.0" "letsencrypt";
+  package ~min:"2.0.0" "letsencrypt";
   package ~min:"0.5.0" "paf" ~sublibs:[ "mirage" ];
   package ~min:"0.0.6" "http-mirage-client";
   package "letsencrypt-mirage";
