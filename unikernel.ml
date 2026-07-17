@@ -318,7 +318,11 @@ module Main
     Last_modified.retrieve_last_commit store >>= fun () ->
     Logs.info (fun m -> m "pulled %s" (Last_modified.etag ()));
     Lwt.map
-      (function Ok () -> () | Error (`Msg msg) -> failwith msg)
+      (function
+        | Ok () -> ()
+        | Error (`Msg msg) -> failwith msg
+        | Error (`HTTP err) -> failwith (Fmt.to_to_string Mimic.pp_error err)
+      )
       (Logs.info (fun m -> m "store: %s" (Last_modified.etag ()));
        if K.tls () then begin
          let request_handler = request_handler mime_type (K.hook ()) store in
