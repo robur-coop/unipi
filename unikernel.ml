@@ -226,7 +226,7 @@ module Main
               Git_kv.get_with_permissions store (Mirage_kv.Key.v path)
             in
             lookup path >>= function
-            | Ok r -> Lwt.return_ok (path, r)
+            | Ok (perm, data) -> Lwt.return_ok (path, perm, data)
             | Error _ ->
               let effective_path = path ^ "/index.html" in
               Lwt_result.map (fun (perm, data) -> effective_path, perm, data)
@@ -236,7 +236,11 @@ module Main
           | Ok (effective_path, `Link, data) ->
             (* XXX(reynir): we could and should sanitize [data] *)
             let headers = [ "location", data ] in
-            H1.Response.create ~headers `Moved_permanently
+            let headers = H1.Headers.of_list headers in
+            let resp = H1.Response.create ~headers `Moved_permanently in
+            http_status resp;
+            H1.Reqd.respond_with_string reqd resp data ;
+            Lwt.return_unit
           | Ok (effective_path, _perm, data) ->
             let headers = [
               "content-type", mime_type effective_path ;
