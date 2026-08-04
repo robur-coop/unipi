@@ -234,7 +234,6 @@ module Main
           in
           find path >>= function
           | Ok (effective_path, `Link, data) ->
-            (* XXX(reynir): we could and should sanitize [data] *)
             let headers = [ "location", data ] in
             let headers = H1.Headers.of_list headers in
             let resp = H1.Response.create ~headers `Moved_permanently in
