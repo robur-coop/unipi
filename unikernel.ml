@@ -102,11 +102,18 @@ module Main
 
     (* cache control: all resources use last-modified + etag of last commit *)
     let retrieve_last_commit store =
-      Git_kv.digest store Mirage_kv.Key.empty >>= fun last_hash ->
+      let commit =
+        match Git_kv.commit store with
+        | Some `Clean hash -> Ohex.encode (Digestif.SHA1.to_raw_string hash)
+        | Some `Dirty hash ->
+          Logs.warn (fun m -> m "last commit is dirty!");
+          Ohex.encode (Digestif.SHA1.to_raw_string hash)
+        | None -> ""
+      in
       Git_kv.last_modified store Mirage_kv.Key.empty >|= fun r ->
       let v = Result.fold ~ok:Fun.id ~error:(fun _ -> Mirage_ptime.now ()) r in
       let last_date = ptime_to_http_date v in
-      last := (last_date, Ohex.encode (Result.get_ok last_hash))
+      last := (last_date, commit)
 
     let not_modified request =
       match H1.Headers.get request.H1.Request.headers "if-modified-since" with
