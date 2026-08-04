@@ -234,7 +234,11 @@ module Main
           in
           find path >>= function
           | Ok (effective_path, `Link, data) ->
-            let headers = [ "location", data ] in
+            let headers = [
+              (* We let the client decide if [data] is a good URL *)
+              "location", data ;
+              "content-length", string_of_int (String.length data);
+            ] in
             let headers = H1.Headers.of_list headers in
             let resp = H1.Response.create ~headers `Moved_permanently in
             http_status resp;
