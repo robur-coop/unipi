@@ -204,11 +204,76 @@ module Main
       let resp = H1.Response.create ~headers `Moved_permanently in
       respond_with_empty reqd resp
 
+    let extract_path req =
+      if String.length req > 0 then
+        if String.get req 0 = '/' then
+          let last =
+            match String.index_opt req ';', String.index_opt req '?' with
+            | None, None -> String.length req
+            | Some n, None | None, Some n -> n
+            | Some a, Some b -> min a b
+          in
+          if last < String.length req then
+            String.sub req 0 last
+          else
+            req
+        else begin
+          Logs.warn (fun m -> m "request path does not start with '/', but %s" req);
+          req
+        end
+      else
+        req
+
+    let int_of_hex_char = function
+      | '0' .. '9' as c -> Char.code c - 48
+      | 'A' .. 'F' as c -> Char.code c - 55
+      | 'a' .. 'f' as c -> Char.code c - 87
+      | _ -> invalid_arg "not a hex char"
+
+    let alphanum = function
+      | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' -> true
+      | _ -> false
+
+    let punctation = function
+      | '.' | '-' | '_' | '~' -> true
+      | _ -> false
+
+    let percent_decode str =
+      let l = String.length str in
+      let b = Buffer.create l in
+      let rec scan s idx =
+        if idx = l then begin
+          Buffer.add_substring b str s (idx - s);
+          Ok ()
+        end else if str.[idx] = '%' then begin
+          Buffer.add_substring b str s (idx - s);
+          if idx + 2 > l then
+            Error "bad percent encoding (bad length)"
+          else
+            let high = idx + 1
+            and low = idx + 2
+            in
+            match int_of_hex_char str.[high], int_of_hex_char str.[low] with
+            | exception _ ->
+              Error "bad percent encoding (invalid hex encoding)"
+            | highbits, lowbits ->
+              let char = Char.chr (highbits lsl 4 + lowbits) in
+              if alphanum char || punctation char then
+                Error "bad percent encoding (alphanumeric or punctation)"
+              else begin
+                Buffer.add_char b char;
+                scan (low + 1) (low + 1)
+              end
+        end else scan s (idx + 1)
+      in
+      match scan 0 0 with
+      | Ok () -> Ok (Buffer.contents b)
+      | Error _ as e -> e
+
     let dispatch mime_type store hookf hook_url _conn reqd =
       let request = H1.Reqd.request reqd in
-      let path =
-        Uri.(pct_decode (path (make ~path:request.H1.Request.target ())))
-      in
+      let path = extract_path request.H1.Request.target in
+      let path = Result.value ~default:path (percent_decode path) in
       Logs.info (fun f -> f "requested %s" path);
       if String.equal hook_url path then
         begin
@@ -247,7 +312,7 @@ module Main
           in
           find path >>= function
           | Ok (effective_path, `Link, data) ->
-            let resp = redirect reqd data in
+            redirect reqd data;
             Lwt.return_unit
           | Ok (effective_path, _perm, data) ->
             let headers = [
@@ -264,7 +329,7 @@ module Main
           | Error _ ->
             match K.default () with
             | Some url ->
-              let resp = redirect reqd url in
+              redirect reqd url;
               Lwt.return_unit
             | None ->
               let data = "Resource not found " ^ path in
@@ -283,18 +348,14 @@ module Main
             Logs.info (fun f -> f "redirect: no host header in request");
             H1.Response.create `Bad_request)
           ~some:(fun host ->
-              let port = if port = 443 then None else Some port in
-              let uri = Uri.of_string request.H1.Request.target in
+              let port = if port = 443 then "" else ":" ^ string_of_int port in
               let new_uri =
-                let uri = Uri.with_host uri (Some host) in
-                let uri = Uri.with_scheme uri (Some "https") in
-                Uri.with_port uri port
+                String.concat "" [ "https://" ; host ; port ; request.H1.Request.target ]
               in
-              Logs.info (fun f -> f "[%s] -> [%s]"
-                            (Uri.to_string uri) (Uri.to_string new_uri));
+              Logs.info (fun f -> f "[%s] -> [%s]" request.H1.Request.target new_uri);
               let headers =
                 H1.Headers.of_list
-                  [ "location", (Uri.to_string new_uri) ] in
+                  [ "location", new_uri ] in
               H1.Response.create ~headers `Moved_permanently)
           (Option.fold
              ~none:(H1.Headers.get request.H1.Request.headers "host")
