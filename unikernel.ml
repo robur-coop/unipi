@@ -202,8 +202,7 @@ module Main
       ] in
       let headers = H1.Headers.of_list headers in
       let resp = H1.Response.create ~headers `Moved_permanently in
-      http_status resp;
-      H1.Reqd.respond_with_string reqd resp ""
+      respond_with_empty reqd resp
 
     let dispatch mime_type store hookf hook_url _conn reqd =
       let request = H1.Reqd.request reqd in
