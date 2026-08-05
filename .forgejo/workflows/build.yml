@@ -1,0 +1,29 @@
+name: Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: ["FreeBSD"]
+    steps:
+      - name: Setup opam
+        run: opam init -a --comp=4.14.4 default http://192.168.0.16
+
+      - name: Setup MirageOS
+        run: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>4.10.0" "ocaml-solo5"
+
+      - name: 'checkout'
+        run: |
+          set -eu
+          git init --quiet --initial-branch main
+          git remote add origin "https://git.robur.coop/${GITHUB_REPOSITORY}.git"
+          git fetch --quiet --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout --quiet "$GITHUB_SHA"
+
+      - name: Configure unikernel
+        run: eval `opam env` && mirage configure -t hvt -f config.ml
+
+      - name: Install dependencies
+        run: eval `opam env` && gmake depend
+
+      - name: Build unikernel
+        run: eval `opam env` && gmake build

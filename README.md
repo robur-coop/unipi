@@ -55,7 +55,7 @@ To install this unikernel from source, you need to have
 The following steps will clone this git repository and compile the unikernel:
 
 ```bash
-$ git clone https://github.com/robur-coop/unipi.git
+$ git clone https://git.robur.coop/robur/unipi.git
 $ cd unipi
 $ mirage configure -t <your-favourite-target> #i.e. hvt, spt, xen
 $ make depend
