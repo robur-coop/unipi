@@ -195,15 +195,15 @@ module Main
           content_type ^ "; charset=utf-8" (* default to utf-8 *)
         | content_type -> content_type
 
-    let redirect data =
+    let redirect reqd data =
       let headers = [
         "location", data ;
-        "content-length", string_of_int (String.length data) ;
+        "content-length", "0" ;
       ] in
       let headers = H1.Headers.of_list headers in
       let resp = H1.Response.create ~headers `Moved_permanently in
       http_status resp;
-      resp
+      H1.Reqd.respond_with_string reqd resp ""
 
     let dispatch mime_type store hookf hook_url _conn reqd =
       let request = H1.Reqd.request reqd in
@@ -248,8 +248,7 @@ module Main
           in
           find path >>= function
           | Ok (effective_path, `Link, data) ->
-            let resp = redirect data in
-            H1.Reqd.respond_with_string reqd resp data ;
+            let resp = redirect reqd data in
             Lwt.return_unit
           | Ok (effective_path, _perm, data) ->
             let headers = [
@@ -266,8 +265,7 @@ module Main
           | Error _ ->
             match K.default () with
             | Some url ->
-              let resp = redirect url in
-              H1.Reqd.respond_with_string reqd resp url ;
+              let resp = redirect reqd url in
               Lwt.return_unit
             | None ->
               let data = "Resource not found " ^ path in
