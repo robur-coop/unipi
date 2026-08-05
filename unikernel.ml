@@ -74,6 +74,10 @@ module K = struct
   let email =
     let doc = Arg.info ~doc:"Let's encrypt E-Mail." ["email"] in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
+
+  let default =
+    let doc = Arg.info ~doc:"Redirect to a specific URL instead of presenting a 404." ["default"] in
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 end
 
 module Main
@@ -191,6 +195,15 @@ module Main
           content_type ^ "; charset=utf-8" (* default to utf-8 *)
         | content_type -> content_type
 
+    let redirect reqd data =
+      let headers = [
+        "location", data ;
+        "content-length", "0" ;
+      ] in
+      let headers = H1.Headers.of_list headers in
+      let resp = H1.Response.create ~headers `Moved_permanently in
+      respond_with_empty reqd resp
+
     let dispatch mime_type store hookf hook_url _conn reqd =
       let request = H1.Reqd.request reqd in
       let path =
@@ -234,15 +247,7 @@ module Main
           in
           find path >>= function
           | Ok (effective_path, `Link, data) ->
-            let headers = [
-              (* We let the client decide if [data] is a good URL *)
-              "location", data ;
-              "content-length", string_of_int (String.length data);
-            ] in
-            let headers = H1.Headers.of_list headers in
-            let resp = H1.Response.create ~headers `Moved_permanently in
-            http_status resp;
-            H1.Reqd.respond_with_string reqd resp data ;
+            let resp = redirect reqd data in
             Lwt.return_unit
           | Ok (effective_path, _perm, data) ->
             let headers = [
@@ -257,13 +262,18 @@ module Main
             H1.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error _ ->
-            let data = "Resource not found " ^ path in
-            let headers = H1.Headers.of_list
-                [ "content-length", string_of_int (String.length data) ] in
-            let resp = H1.Response.create ~headers `Not_found in
-            http_status resp;
-            H1.Reqd.respond_with_string reqd resp data ;
-            Lwt.return_unit
+            match K.default () with
+            | Some url ->
+              let resp = redirect reqd url in
+              Lwt.return_unit
+            | None ->
+              let data = "Resource not found " ^ path in
+              let headers = H1.Headers.of_list
+                  [ "content-length", string_of_int (String.length data) ] in
+              let resp = H1.Response.create ~headers `Not_found in
+              http_status resp;
+              H1.Reqd.respond_with_string reqd resp data ;
+              Lwt.return_unit
 
     let redirect ~hostname port _ _ reqd =
       let request = H1.Reqd.request reqd in
