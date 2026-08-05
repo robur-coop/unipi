@@ -214,15 +214,17 @@ module Main
             | Some a, Some b -> min a b
           in
           if last < String.length req then
-            String.sub req 0 last
+            Some (String.sub req 0 last)
           else
-            req
+            Some req
         else begin
-          Logs.warn (fun m -> m "request path does not start with '/', but %s" req);
-          req
+          Logs.debug (fun m -> m "request path does not start with '/', but %s" req);
+          None
         end
-      else
-        req
+      else begin
+        Logs.debug (fun m -> m "empty request path");
+        None
+      end
 
     let int_of_hex_char = function
       | '0' .. '9' as c -> Char.code c - 48
@@ -270,75 +272,87 @@ module Main
       | Ok () -> Ok (Buffer.contents b)
       | Error _ as e -> e
 
+    let path_of_target target reqd k =
+      let bad_request () = respond_with_empty reqd (H1.Response.create `Bad_request) in
+      match extract_path target with
+      | None ->
+        bad_request ()
+      | Some path ->
+        match percent_decode path with
+        | Error msg ->
+          Logs.debug (fun m -> m "Bad path: %s" msg);
+          respond_with_empty reqd (H1.Response.create `Bad_request)
+        | Ok path ->
+          k path
+
     let dispatch mime_type store hookf hook_url _conn reqd =
       let request = H1.Reqd.request reqd in
-      let path = extract_path request.H1.Request.target in
-      let path = Result.value ~default:path (percent_decode path) in
+      path_of_target request.H1.Request.target reqd @@ fun path ->
       Logs.info (fun f -> f "requested %s" path);
       if String.equal hook_url path then
         begin
           Lwt.async @@ fun () -> hookf () >>= function
           | Ok data ->
             let headers = H1.Headers.of_list
-              [ "content-length", string_of_int (String.length data) ] in
+                [ "content-length", string_of_int (String.length data) ] in
             let resp = H1.Response.create ~headers `OK in
             http_status resp;
             H1.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
           | Error (`Msg msg) ->
             let headers = H1.Headers.of_list
-              [ "content-length", string_of_int (String.length msg) ] in
+                [ "content-length", string_of_int (String.length msg) ] in
             let resp = H1.Response.create ~headers `Internal_server_error in
             http_status resp;
             H1.Reqd.respond_with_string reqd resp msg ;
             Lwt.return_unit
         end
       else
-        if Last_modified.not_modified request then
-          let resp = H1.Response.create `Not_modified in
-          respond_with_empty reqd resp
-        else
-          Lwt.async @@ fun () ->
-          let find path =
-            let lookup path =
-              Git_kv.get_with_permissions store (Mirage_kv.Key.v path)
-            in
-            lookup path >>= function
-            | Ok (perm, data) -> Lwt.return_ok (path, perm, data)
-            | Error _ ->
-              let effective_path = path ^ "/index.html" in
-              Lwt_result.map (fun (perm, data) -> effective_path, perm, data)
-                (lookup effective_path)
+      if Last_modified.not_modified request then
+        let resp = H1.Response.create `Not_modified in
+        respond_with_empty reqd resp
+      else
+        Lwt.async @@ fun () ->
+        let find path =
+          let lookup path =
+            Git_kv.get_with_permissions store (Mirage_kv.Key.v path)
           in
-          find path >>= function
-          | Ok (effective_path, `Link, data) ->
-            redirect reqd data;
+          lookup path >>= function
+          | Ok (perm, data) -> Lwt.return_ok (path, perm, data)
+          | Error _ ->
+            let effective_path = path ^ "/index.html" in
+            Lwt_result.map (fun (perm, data) -> effective_path, perm, data)
+              (lookup effective_path)
+        in
+        find path >>= function
+        | Ok (effective_path, `Link, data) ->
+          redirect reqd data;
+          Lwt.return_unit
+        | Ok (effective_path, _perm, data) ->
+          let headers = [
+            "content-type", mime_type effective_path ;
+            "etag", Last_modified.etag () ;
+            "last-modified", Last_modified.last_modified () ;
+            "content-length", string_of_int (String.length data) ;
+          ] in
+          let headers = H1.Headers.of_list headers in
+          let resp = H1.Response.create ~headers `OK in
+          http_status resp;
+          H1.Reqd.respond_with_string reqd resp data ;
+          Lwt.return_unit
+        | Error _ ->
+          match K.default () with
+          | Some url ->
+            redirect reqd url;
             Lwt.return_unit
-          | Ok (effective_path, _perm, data) ->
-            let headers = [
-              "content-type", mime_type effective_path ;
-              "etag", Last_modified.etag () ;
-              "last-modified", Last_modified.last_modified () ;
-              "content-length", string_of_int (String.length data) ;
-            ] in
-            let headers = H1.Headers.of_list headers in
-            let resp = H1.Response.create ~headers `OK in
+          | None ->
+            let data = "Resource not found " ^ path in
+            let headers = H1.Headers.of_list
+                [ "content-length", string_of_int (String.length data) ] in
+            let resp = H1.Response.create ~headers `Not_found in
             http_status resp;
             H1.Reqd.respond_with_string reqd resp data ;
             Lwt.return_unit
-          | Error _ ->
-            match K.default () with
-            | Some url ->
-              redirect reqd url;
-              Lwt.return_unit
-            | None ->
-              let data = "Resource not found " ^ path in
-              let headers = H1.Headers.of_list
-                  [ "content-length", string_of_int (String.length data) ] in
-              let resp = H1.Response.create ~headers `Not_found in
-              http_status resp;
-              H1.Reqd.respond_with_string reqd resp data ;
-              Lwt.return_unit
 
     let redirect ~hostname port _ _ reqd =
       let request = H1.Reqd.request reqd in
