@@ -356,27 +356,24 @@ module Main
 
     let redirect ~hostname port _ _ reqd =
       let request = H1.Reqd.request reqd in
-      let response =
+      let host =
         Option.fold
-          ~none:(
-            Logs.info (fun f -> f "redirect: no host header in request");
-            H1.Response.create `Bad_request)
-          ~some:(fun host ->
-              let port = if port = 443 then "" else ":" ^ string_of_int port in
-              let new_uri =
-                String.concat "" [ "https://" ; host ; port ; request.H1.Request.target ]
-              in
-              Logs.info (fun f -> f "[%s] -> [%s]" request.H1.Request.target new_uri);
-              let headers =
-                H1.Headers.of_list
-                  [ "location", new_uri ] in
-              H1.Response.create ~headers `Moved_permanently)
-          (Option.fold
-             ~none:(H1.Headers.get request.H1.Request.headers "host")
-             ~some:(fun a -> Some a)
-             hostname)
+          ~none:(H1.Headers.get request.H1.Request.headers "host")
+          ~some:(fun a -> Some a)
+          hostname
       in
-      respond_with_empty reqd response
+      match host with
+      | None ->
+        Logs.info (fun f -> f "redirect: no host header in request");
+        let response = H1.Response.create `Bad_request in
+        respond_with_empty reqd response
+      | Some host ->
+        let port = if port = 443 then "" else ":" ^ string_of_int port in
+        let new_uri =
+          String.concat "" [ "https://" ; host ; port ; request.H1.Request.target ]
+        in
+        Logs.info (fun f -> f "[%s] -> [%s]" request.H1.Request.target new_uri);
+        redirect reqd new_uri
   end
 
   let pp_error ppf = function
