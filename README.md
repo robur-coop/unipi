@@ -26,8 +26,11 @@ Unipi is only configured via boot parameters, as follows:
 - `--port` configures the TCP port to listen on (defaults to 80)
 - `--remote` configures the git remote url (e.g. https://github.com/mirage/ocaml-dns.git#gh-pages)
 - `--hook` configures the (secret) url of the webhook, if requested unipi updates its internal git remote (default is "hook")
+- `--default` configures a URL to redirect to instead of presenting a 404.
 - `--ipv4` configures the IPv4 address of unipi (e.g. 192.168.2.2/24)
 - `--ipv4-gateway` configures the IPv4 gateway
+
+The options `--ipv4` and `--ipv4-gateway` can be left out. In that case DHCP is used to acquire an IPv4 address.
 
 To use git via ssh (only public/private key authentication is supported):
 - `--ssh-key` for the ssh private key - either rsa:<seed> or ed25519:<b64-encoded private key> (you can use the tool `awa_gen_key` to produce a random seed and public key)
