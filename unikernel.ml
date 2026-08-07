@@ -343,6 +343,7 @@ module Main
         | Error _ ->
           match K.default () with
           | Some url ->
+            Logs.info (fun m -> m "%s -> [default] %s" path url);
             redirect ~status:`Found reqd url;
             Lwt.return_unit
           | None ->
