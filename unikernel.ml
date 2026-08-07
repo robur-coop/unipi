@@ -76,7 +76,7 @@ module K = struct
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
   let default =
-    let doc = Arg.info ~doc:"Redirect to a specific URL instead of presenting a 404." ["default"] in
+    let doc = Arg.info ~doc:"Redirect (with 302) to a specific URL instead of responding with not found 404." ["default"] in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 end
 
@@ -195,13 +195,13 @@ module Main
           content_type ^ "; charset=utf-8" (* default to utf-8 *)
         | content_type -> content_type
 
-    let redirect reqd data =
+    let redirect ?(status = `Moved_permanently) reqd data =
       let headers = [
         "location", data ;
         "content-length", "0" ;
       ] in
       let headers = H1.Headers.of_list headers in
-      let resp = H1.Response.create ~headers `Moved_permanently in
+      let resp = H1.Response.create ~headers status in
       respond_with_empty reqd resp
 
     let extract_path req =
@@ -343,7 +343,7 @@ module Main
         | Error _ ->
           match K.default () with
           | Some url ->
-            redirect reqd url;
+            redirect ~status:`Found reqd url;
             Lwt.return_unit
           | None ->
             let data = "Resource not found " ^ path in
