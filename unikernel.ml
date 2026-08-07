@@ -76,7 +76,7 @@ module K = struct
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
   let default =
-    let doc = Arg.info ~doc:"Redirect to a specific URL instead of presenting a 404." ["default"] in
+    let doc = Arg.info ~doc:"Redirect (with 302) to a specific URL instead of responding with not found 404." ["default"] in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 end
 
@@ -195,13 +195,13 @@ module Main
           content_type ^ "; charset=utf-8" (* default to utf-8 *)
         | content_type -> content_type
 
-    let redirect reqd data =
+    let redirect ?(status = `Moved_permanently) reqd data =
       let headers = [
         "location", data ;
         "content-length", "0" ;
       ] in
       let headers = H1.Headers.of_list headers in
-      let resp = H1.Response.create ~headers `Moved_permanently in
+      let resp = H1.Response.create ~headers status in
       respond_with_empty reqd resp
 
     let extract_path req =
@@ -343,7 +343,8 @@ module Main
         | Error _ ->
           match K.default () with
           | Some url ->
-            redirect reqd url;
+            Logs.info (fun m -> m "%s -> [default] %s" path url);
+            redirect ~status:`Found reqd url;
             Lwt.return_unit
           | None ->
             let data = "Resource not found " ^ path in
@@ -356,27 +357,24 @@ module Main
 
     let redirect ~hostname port _ _ reqd =
       let request = H1.Reqd.request reqd in
-      let response =
+      let host =
         Option.fold
-          ~none:(
-            Logs.info (fun f -> f "redirect: no host header in request");
-            H1.Response.create `Bad_request)
-          ~some:(fun host ->
-              let port = if port = 443 then "" else ":" ^ string_of_int port in
-              let new_uri =
-                String.concat "" [ "https://" ; host ; port ; request.H1.Request.target ]
-              in
-              Logs.info (fun f -> f "[%s] -> [%s]" request.H1.Request.target new_uri);
-              let headers =
-                H1.Headers.of_list
-                  [ "location", new_uri ] in
-              H1.Response.create ~headers `Moved_permanently)
-          (Option.fold
-             ~none:(H1.Headers.get request.H1.Request.headers "host")
-             ~some:(fun a -> Some a)
-             hostname)
+          ~none:(H1.Headers.get request.H1.Request.headers "host")
+          ~some:(fun a -> Some a)
+          hostname
       in
-      respond_with_empty reqd response
+      match host with
+      | None ->
+        Logs.info (fun f -> f "redirect: no host header in request");
+        let response = H1.Response.create `Bad_request in
+        respond_with_empty reqd response
+      | Some host ->
+        let port = if port = 443 then "" else ":" ^ string_of_int port in
+        let new_uri =
+          String.concat "" [ "https://" ; host ; port ; request.H1.Request.target ]
+        in
+        Logs.info (fun f -> f "[%s] -> [%s]" request.H1.Request.target new_uri);
+        redirect reqd new_uri
   end
 
   let pp_error ppf = function
