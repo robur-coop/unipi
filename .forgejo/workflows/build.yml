@@ -8,6 +8,9 @@ jobs:
       - name: Setup opam
         run: opam init -a --comp=4.14.4 default http://192.168.0.16
 
+      - name: Update opam
+        run: opam update
+
       - name: Setup MirageOS
         run: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>4.10.0" "ocaml-solo5"
 
